@@ -1,0 +1,718 @@
+"""
+MarkScientist Interactive CLI
+
+Interactive command-line interface inspired by cc-mini.
+Supports REPL mode with slash commands and auto-review mode.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Tuple
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.document import Document
+from prompt_toolkit.history import FileHistory
+from rich.console import Console
+from rich.spinner import Spinner
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+
+from markscientist.config import Config, get_config, set_config
+from markscientist.models.base import ModelConfig
+
+console = Console()
+_HISTORY_FILE = Path.home() / ".markscientist_history"
+
+# Double-press timeout for Ctrl+C exit
+_DOUBLE_PRESS_TIMEOUT_MS = 0.8
+
+
+class SlashCommandCompleter(Completer):
+    """Autocomplete for slash commands."""
+
+    COMMANDS: list[tuple[str, str]] = [
+        ('help', 'Show available commands'),
+        ('solver', 'Run task with Solver agent (with auto-review)'),
+        ('judge', 'Review content with Judge agent'),
+        ('evaluator', 'Meta-evaluate with Evaluator agent'),
+        ('workflow', 'Run full research workflow'),
+        ('review', 'Toggle auto-review mode on/off'),
+        ('model', 'Show or switch model'),
+        ('config', 'Show current configuration'),
+        ('clear', 'Clear conversation history'),
+        ('exit', 'Exit the REPL'),
+    ]
+
+    def get_completions(self, document: Document, complete_event):
+        text = document.text_before_cursor.lstrip()
+        if not text.startswith('/'):
+            return
+
+        query = text[1:].lower()
+
+        for name, desc in self.COMMANDS:
+            if not query or name.startswith(query):
+                yield Completion(
+                    f'/{name}',
+                    start_position=-len(text),
+                    display=f'/{name}',
+                    display_meta=desc,
+                )
+
+
+class SpinnerManager:
+    """Manages spinner display during processing."""
+
+    def __init__(self, con: Console):
+        self._console = con
+        self._live: Optional[Live] = None
+        self._spinner: Optional[Spinner] = None
+
+    def start(self, message: str = "Thinking..."):
+        self.stop()
+        self._spinner = Spinner("dots", text=f"[dim]{message}[/dim]")
+        self._live = Live(self._spinner, console=self._console, refresh_per_second=10)
+        self._live.start()
+
+    def stop(self):
+        if self._live:
+            self._live.stop()
+            self._live = None
+            self._spinner = None
+
+    def update(self, message: str):
+        if self._spinner:
+            self._spinner.text = f"[dim]{message}[/dim]"
+
+
+class MarkScientistCLI:
+    """Interactive CLI for MarkScientist."""
+
+    def __init__(self, config: Optional[Config] = None):
+        self.config = config or get_config()
+        self._current_agent = "solver"
+        self._session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self._spinner = SpinnerManager(console)
+        self._auto_review = True  # Auto-review mode enabled by default
+        self._last_output = ""  # Store last solver output for reference
+
+    def _get_model_config(self) -> ModelConfig:
+        """Get model configuration."""
+        return ModelConfig(
+            backend=self.config.model.backend,
+            model_name=self.config.model.model_name,
+            api_key=self.config.model.api_key,
+            api_base=self.config.model.api_base,
+            temperature=self.config.agent.temperature,
+            top_p=self.config.agent.top_p,
+            max_tokens=self.config.agent.max_output_tokens,
+        )
+
+    def _get_agent(self, agent_type: str):
+        """Get agent instance by type."""
+        from markscientist.agents import SolverAgent, JudgeAgent, EvaluatorAgent
+
+        model_config = self._get_model_config()
+        workspace = self.config.workspace_root or Path.cwd()
+        trace_dir = self.config.trajectory.save_dir
+        trace_path = trace_dir / f"{self._session_id}_{agent_type}.jsonl" if self.config.trajectory.auto_save else None
+
+        if agent_type == "solver":
+            return SolverAgent(
+                model_config=model_config,
+                workspace_root=workspace,
+                trace_path=trace_path,
+            )
+        elif agent_type == "judge":
+            return JudgeAgent(
+                model_config=model_config,
+                workspace_root=workspace,
+                trace_path=trace_path,
+            )
+        elif agent_type == "evaluator":
+            return EvaluatorAgent(
+                model_config=model_config,
+                workspace_root=workspace,
+                trace_path=trace_path,
+            )
+        else:
+            raise ValueError(f"Unknown agent type: {agent_type}")
+
+    def _format_review_result(self, review, buddy=None) -> Table:
+        """Format Judge review result as a compact display."""
+        from markscientist.buddy import ReviewerBuddy, render_face, get_reaction
+
+        # Get appropriate reviewer buddy for the task type
+        if buddy is None:
+            buddy = ReviewerBuddy.for_task_type(review.task_type)
+            buddy.eye = buddy.get_mood_eye(review.overall_score)
+
+        # Build score display
+        score_color = "green" if review.overall_score >= 7 else "yellow" if review.overall_score >= 5 else "red"
+
+        # Create a compact table for scores
+        table = Table(show_header=False, box=None, padding=(0, 1))
+        table.add_column("Label", style="dim")
+        table.add_column("Value")
+
+        # Show reaction based on score
+        reaction = get_reaction(buddy, review.overall_score)
+        table.add_row("Reaction", f"[{buddy.color} italic]{reaction}[/{buddy.color} italic]")
+
+        # Show task type
+        table.add_row("Type", f"[cyan]{review.task_type}[/cyan]")
+        table.add_row("Score", f"[{score_color} bold]{review.overall_score:.1f}/10[/{score_color} bold]")
+
+        # Add dimension scores if available
+        if review.dimension_scores:
+            dims = []
+            for dim, score in review.dimension_scores.items():
+                dim_color = "green" if score >= 7 else "yellow" if score >= 5 else "red"
+                dims.append(f"{dim}: [{dim_color}]{score:.1f}[/{dim_color}]")
+            if dims:
+                table.add_row("Details", " | ".join(dims[:4]))  # Show max 4 dimensions
+
+        # Add verdict if available
+        if review.verdict:
+            table.add_row("Verdict", f"[bold]{review.verdict}[/bold]")
+
+        # Format weaknesses if any (show top 2)
+        if review.weaknesses:
+            weak_items = []
+            for w in review.weaknesses[:2]:
+                if isinstance(w, dict):
+                    weak_items.append(w.get("description", str(w))[:50])
+                else:
+                    weak_items.append(str(w)[:50])
+            if weak_items:
+                table.add_row("Issues", "; ".join(weak_items))
+
+        return table
+
+    def run_solver_with_review(self, user_input: str) -> None:
+        """Run Solver with automatic Judge review."""
+        from markscientist.agents.judge import JudgeAgent
+
+        # Phase 1: Run Solver
+        self._spinner.start("Solver executing...")
+
+        try:
+            solver = self._get_agent("solver")
+            solver_result = solver.run(user_input)
+            self._spinner.stop()
+
+            if not solver_result.success:
+                console.print(f"[red]Solver Error:[/red] {solver_result.termination_reason}")
+                console.print(solver_result.output)
+                return
+
+            # Store and display solver output
+            self._last_output = solver_result.output
+            console.print(Panel(
+                solver_result.output,
+                title="[bold blue]Solver Output[/bold blue]",
+                border_style="blue"
+            ))
+
+            # Phase 2: Auto-review with Judge
+            if self._auto_review:
+                console.print()
+                # Show all buddies waiting - more lively!
+                from markscientist.buddy import ReviewerBuddy, render_face, REVIEWER_SPECIES
+                all_faces = " ".join([render_face(ReviewerBuddy.from_species(s)) for s in REVIEWER_SPECIES[:4]])
+                self._spinner.start(f"{all_faces} Summoning reviewer...")
+
+                judge = self._get_agent("judge")
+                review = judge.review(
+                    artifact=solver_result.output,
+                    artifact_type="auto",
+                )
+                self._spinner.stop()
+
+                # Get the right buddy for this task type
+                review_buddy = ReviewerBuddy.for_task_type(review.task_type)
+                review_buddy.eye = review_buddy.get_mood_eye(review.overall_score)
+                buddy_face = render_face(review_buddy)
+
+                # Buddy arrives with greeting!
+                console.print(f"[{review_buddy.color}]{buddy_face}[/{review_buddy.color}] "
+                             f"[{review_buddy.color} bold]{review_buddy.name}[/{review_buddy.color} bold] "
+                             f"[dim]appears![/dim] "
+                             f"[{review_buddy.color} italic]\"{review_buddy.catchphrase}\"[/{review_buddy.color} italic]")
+                console.print()
+
+                # Display review results
+                review_table = self._format_review_result(review, review_buddy)
+                console.print(Panel(
+                    review_table,
+                    title=f"[bold {review_buddy.color}]{buddy_face} {review_buddy.title}[/bold {review_buddy.color}]",
+                    border_style=review_buddy.color
+                ))
+
+                # Optional: If score is low, suggest improvement
+                if review.overall_score < 6.0:
+                    console.print(
+                        f"[dim]Tip: Score is below 6.0. Use [bold]/workflow[/bold] for auto-improvement loop.[/dim]"
+                    )
+
+        except Exception as e:
+            self._spinner.stop()
+            console.print(f"[red]Error:[/red] {str(e)}")
+
+    def run_query(self, user_input: str, agent_type: Optional[str] = None,
+                  show_spinner: bool = True) -> str:
+        """Run a query with the specified agent (without auto-review)."""
+        agent_type = agent_type or self._current_agent
+
+        if show_spinner:
+            self._spinner.start(f"Running {agent_type}...")
+
+        try:
+            agent = self._get_agent(agent_type)
+            result = agent.run(user_input)
+
+            if show_spinner:
+                self._spinner.stop()
+
+            if result.success:
+                return result.output
+            else:
+                return f"[Error] {result.termination_reason}: {result.output}"
+
+        except Exception as e:
+            if show_spinner:
+                self._spinner.stop()
+            return f"[Error] {str(e)}"
+
+    def run_workflow(self, task: str) -> None:
+        """Run the full research workflow."""
+        from markscientist.workflow import BasicResearchWorkflow
+
+        self._spinner.start("Running workflow...")
+
+        try:
+            workflow = BasicResearchWorkflow(
+                config=self.config,
+                save_dir=self.config.trajectory.save_dir if self.config.trajectory.auto_save else None,
+            )
+            result = workflow.run(task)
+
+            self._spinner.stop()
+
+            # Display workflow result
+            console.print(Panel(
+                result.solver_output[:2000] + ("..." if len(result.solver_output) > 2000 else ""),
+                title="[bold blue]Final Output[/bold blue]",
+                border_style="blue"
+            ))
+
+            # Summary table
+            summary_table = Table(show_header=False, box=None)
+            summary_table.add_column("Label", style="dim")
+            summary_table.add_column("Value")
+
+            status = "[green]Success[/green]" if result.success else "[red]Failed[/red]"
+            score_color = "green" if result.final_score >= 7 else "yellow" if result.final_score >= 5 else "red"
+
+            summary_table.add_row("Status", status)
+            summary_table.add_row("Final Score", f"[{score_color} bold]{result.final_score:.1f}/10[/{score_color} bold]")
+            summary_table.add_row("Iterations", str(result.iterations))
+
+            if result.judge_review and result.judge_review.verdict:
+                summary_table.add_row("Verdict", result.judge_review.verdict)
+
+            console.print(Panel(
+                summary_table,
+                title="[bold green]Workflow Complete[/bold green]",
+                border_style="green"
+            ))
+
+        except Exception as e:
+            self._spinner.stop()
+            console.print(f"[red]Error:[/red] {str(e)}")
+
+    def handle_command(self, cmd_name: str, cmd_args: str) -> Optional[str]:
+        """Handle slash commands. Returns None to continue, string to print."""
+        if cmd_name == "help":
+            return self._show_help()
+
+        elif cmd_name == "solver":
+            self._current_agent = "solver"
+            if cmd_args:
+                self.run_solver_with_review(cmd_args)
+                return None  # Already printed
+            return "[green]Switched to Solver agent (auto-review enabled).[/green]"
+
+        elif cmd_name == "judge":
+            self._current_agent = "judge"
+            if cmd_args:
+                result = self.run_query(cmd_args, "judge")
+                console.print(Panel(result, title="[bold yellow]Judge[/bold yellow]", border_style="yellow"))
+                return None
+            return "[green]Switched to Judge agent.[/green] Enter content to review."
+
+        elif cmd_name == "evaluator":
+            self._current_agent = "evaluator"
+            if cmd_args:
+                result = self.run_query(cmd_args, "evaluator")
+                console.print(Panel(result, title="[bold magenta]Evaluator[/bold magenta]", border_style="magenta"))
+                return None
+            return "[green]Switched to Evaluator agent.[/green] Enter evaluation task."
+
+        elif cmd_name == "workflow":
+            if cmd_args:
+                self.run_workflow(cmd_args)
+                return None
+            return "[yellow]Usage:[/yellow] /workflow <task description>"
+
+        elif cmd_name == "review":
+            self._auto_review = not self._auto_review
+            status = "[green]enabled[/green]" if self._auto_review else "[yellow]disabled[/yellow]"
+            return f"Auto-review mode: {status}"
+
+        elif cmd_name == "model":
+            if cmd_args:
+                self.config.model.model_name = cmd_args
+                return f"[green]Model switched to:[/green] {cmd_args}"
+            return f"[bold]Current model:[/bold] {self.config.model.backend}:{self.config.model.model_name}"
+
+        elif cmd_name == "config":
+            return self._show_config()
+
+        elif cmd_name == "clear":
+            self._session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self._last_output = ""
+            return "[green]Session cleared.[/green] New session started."
+
+        elif cmd_name in ("exit", "quit"):
+            return None  # Signal to exit
+
+        else:
+            return f"[red]Unknown command:[/red] /{cmd_name}. Type /help for available commands."
+
+    def _show_help(self) -> str:
+        auto_status = "[green]ON[/green]" if self._auto_review else "[yellow]OFF[/yellow]"
+        return f"""
+[bold cyan]MarkScientist Commands[/bold cyan]
+{'─' * 50}
+  [bold]/help[/bold]        Show this help message
+  [bold]/solver[/bold]      Switch to Solver (with auto-review)
+  [bold]/judge[/bold]       Switch to Judge agent
+  [bold]/evaluator[/bold]   Switch to Evaluator agent
+  [bold]/workflow[/bold]    Run full Solver→Judge→Improve→Evaluate loop
+  [bold]/review[/bold]      Toggle auto-review mode (currently {auto_status})
+  [bold]/model[/bold]       Show or switch model
+  [bold]/config[/bold]      Show current configuration
+  [bold]/clear[/bold]       Clear session
+  [bold]/exit[/bold]        Exit
+
+[bold cyan]How it works[/bold cyan]
+{'─' * 50}
+  [bold]Solver[/bold]    - Executes research tasks using tools
+  [bold]Judge[/bold]     - Reviews output quality (auto after Solver)
+  [bold]Evaluator[/bold] - Meta-evaluates system performance
+  [bold]Workflow[/bold]  - Full loop with auto-improvement if score < 6
+
+[dim]Tips: Ctrl+C twice to exit | Direct input goes to current agent[/dim]
+"""
+
+    def _show_config(self) -> str:
+        auto_status = "[green]ON[/green]" if self._auto_review else "[yellow]OFF[/yellow]"
+        return f"""
+[bold cyan]Current Configuration[/bold cyan]
+{'─' * 40}
+[bold]Model:[/bold] {self.config.model.backend}:{self.config.model.model_name}
+[bold]Agent:[/bold] {self._current_agent}
+[bold]Auto-review:[/bold] {auto_status}
+[bold]Session:[/bold] {self._session_id}
+[bold]Workspace:[/bold] {self.config.workspace_root or Path.cwd()}
+[bold]Save trajectories:[/bold] {self.config.trajectory.auto_save}
+"""
+
+    def parse_command(self, user_input: str) -> Optional[Tuple[str, str]]:
+        """Parse slash command. Returns (cmd_name, args) or None."""
+        if not user_input.startswith("/"):
+            return None
+
+        parts = user_input[1:].split(maxsplit=1)
+        cmd_name = parts[0].lower()
+        cmd_args = parts[1] if len(parts) > 1 else ""
+        return cmd_name, cmd_args
+
+
+def run_interactive(config: Config, initial_agent: str = "solver") -> None:
+    """Run interactive REPL mode."""
+    cli = MarkScientistCLI(config)
+    cli._current_agent = initial_agent
+
+    # Welcome message
+    console.print()
+    console.print("[bold cyan]MarkScientist[/bold cyan]  "
+                  f"[dim]{config.model.backend}:{config.model.model_name}[/dim]")
+    console.print(f"[dim]Auto-review: ON | Type /help for commands | Ctrl+C twice to exit[/dim]")
+
+    session = PromptSession(
+        history=FileHistory(str(_HISTORY_FILE)),
+        completer=SlashCommandCompleter(),
+    )
+
+    last_ctrlc_time = 0.0
+
+    while True:
+        try:
+            console.print()
+            prompt_prefix = f"[{cli._current_agent}]"
+            if cli._auto_review and cli._current_agent == "solver":
+                prompt_prefix = f"[{cli._current_agent}+judge]"
+            user_input = session.prompt(f"{prompt_prefix} > ").strip()
+
+        except KeyboardInterrupt:
+            now = time.monotonic()
+            if now - last_ctrlc_time <= _DOUBLE_PRESS_TIMEOUT_MS:
+                console.print("\n[dim]Goodbye.[/dim]")
+                break
+            last_ctrlc_time = now
+            console.print("\n[dim yellow]Press Ctrl+C again to exit[/dim yellow]")
+            continue
+
+        except EOFError:
+            console.print("\n[dim]Goodbye.[/dim]")
+            break
+
+        # Reset double-press timer
+        last_ctrlc_time = 0.0
+
+        if not user_input:
+            continue
+
+        # Handle exit commands
+        if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
+            console.print("[dim]Goodbye.[/dim]")
+            break
+
+        # Handle slash commands
+        cmd = cli.parse_command(user_input)
+        if cmd is not None:
+            cmd_name, cmd_args = cmd
+            if cmd_name in ("exit", "quit"):
+                console.print("[dim]Goodbye.[/dim]")
+                break
+            result = cli.handle_command(cmd_name, cmd_args)
+            if result:
+                console.print(result)
+            continue
+
+        # Regular query - use auto-review for solver
+        if cli._current_agent == "solver" and cli._auto_review:
+            cli.run_solver_with_review(user_input)
+        else:
+            result = cli.run_query(user_input)
+            agent_color = {"solver": "blue", "judge": "yellow", "evaluator": "magenta"}.get(cli._current_agent, "white")
+            console.print(Panel(
+                result,
+                title=f"[bold {agent_color}]{cli._current_agent.capitalize()}[/bold {agent_color}]",
+                border_style=agent_color
+            ))
+
+
+def run_once(config: Config, task: str, agent_type: str = "solver",
+             workflow: bool = False, json_output: bool = False,
+             auto_review: bool = True) -> int:
+    """Run a single task and exit."""
+    cli = MarkScientistCLI(config)
+    cli._auto_review = auto_review
+
+    try:
+        if workflow:
+            from markscientist.workflow import BasicResearchWorkflow
+
+            if not json_output:
+                console.print(f"\n[bold cyan]MarkScientist Workflow[/bold cyan]")
+                console.print(f"[dim]Task: {task[:100]}{'...' if len(task) > 100 else ''}[/dim]")
+
+            wf = BasicResearchWorkflow(
+                config=config,
+                save_dir=config.trajectory.save_dir if config.trajectory.auto_save else None,
+            )
+            result = wf.run(task)
+
+            if json_output:
+                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                console.print(Panel(
+                    result.improved_output or result.solver_output,
+                    title="[bold blue]Output[/bold blue]",
+                    border_style="blue"
+                ))
+                console.print(f"\n[bold]Score:[/bold] {result.final_score:.1f}/10 | "
+                            f"[bold]Success:[/bold] {result.success} | "
+                            f"[bold]Iterations:[/bold] {result.iterations}")
+
+        elif agent_type == "solver" and auto_review:
+            # Solver with auto-review
+            if not json_output:
+                console.print(f"\n[bold cyan]MarkScientist Solver + Judge[/bold cyan]")
+                console.print(f"[dim]Task: {task[:100]}{'...' if len(task) > 100 else ''}[/dim]")
+
+            cli.run_solver_with_review(task)
+
+        else:
+            # Single agent without review
+            if not json_output:
+                console.print(f"\n[bold cyan]MarkScientist {agent_type.capitalize()}[/bold cyan]")
+                console.print(f"[dim]Task: {task[:100]}{'...' if len(task) > 100 else ''}[/dim]")
+
+            output = cli.run_query(task, agent_type, show_spinner=True)
+
+            if json_output:
+                print(json.dumps({"output": output}, ensure_ascii=False, indent=2))
+            else:
+                console.print(Panel(output, title=f"[bold]{agent_type.capitalize()}[/bold]"))
+
+        return 0
+
+    except KeyboardInterrupt:
+        console.print("\n\n[yellow]Interrupted by user.[/yellow]")
+        return 130
+
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def main(argv: Optional[list] = None) -> int:
+    """CLI main entry."""
+    parser = argparse.ArgumentParser(
+        prog="markscientist",
+        description="MarkScientist - Self-evolving Research Agent with Scientific Taste",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Start interactive REPL (Solver + auto Judge review)
+  markscientist
+
+  # Run a single task (Solver + Judge review)
+  markscientist "Analyze the complexity of this code"
+
+  # Run without auto-review
+  markscientist "Analyze code" --no-review
+
+  # Use Judge only
+  markscientist "Evaluate this paper" --agent judge
+
+  # Run complete workflow (with improvement loop)
+  markscientist "Write a literature review" --workflow
+        """,
+    )
+
+    parser.add_argument(
+        "prompt",
+        nargs="?",
+        help="Prompt to send (optional, starts REPL if not provided)",
+    )
+
+    parser.add_argument(
+        "-p", "--print",
+        action="store_true",
+        help="Non-interactive: print response and exit",
+    )
+
+    parser.add_argument(
+        "--agent",
+        choices=["solver", "judge", "evaluator"],
+        default="solver",
+        help="Agent type to use (default: solver)",
+    )
+
+    parser.add_argument(
+        "--workflow",
+        action="store_true",
+        help="Run complete Solver-Judge-Improve-Evaluate workflow",
+    )
+
+    parser.add_argument(
+        "--no-review",
+        action="store_true",
+        help="Disable auto Judge review after Solver",
+    )
+
+    parser.add_argument(
+        "--model",
+        help="Model name to use",
+    )
+
+    parser.add_argument(
+        "--backend",
+        choices=["openai", "anthropic"],
+        help="Model backend",
+    )
+
+    parser.add_argument(
+        "--workspace",
+        help="Workspace directory",
+    )
+
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Disable trajectory auto-save",
+    )
+
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in JSON format",
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="MarkScientist v0.1.0",
+    )
+
+    args = parser.parse_args(argv)
+
+    # Load and update config
+    config = Config.from_env()
+    if args.model:
+        config.model.model_name = args.model
+    if args.backend:
+        config.model.backend = args.backend
+    if args.workspace:
+        config.workspace_root = Path(args.workspace)
+    if args.no_save:
+        config.trajectory.auto_save = False
+
+    set_config(config)
+
+    # Determine mode
+    if args.prompt:
+        # Non-interactive: run single task
+        return run_once(config, args.prompt, args.agent, args.workflow,
+                       args.json, auto_review=not args.no_review)
+    elif args.print:
+        # Read from stdin
+        task = sys.stdin.read().strip()
+        if not task:
+            console.print("[red]No input provided.[/red]")
+            return 1
+        return run_once(config, task, args.agent, args.workflow,
+                       args.json, auto_review=not args.no_review)
+    else:
+        # Interactive REPL
+        run_interactive(config, args.agent)
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
