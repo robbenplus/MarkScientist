@@ -41,29 +41,24 @@ markscientist
 
 ```mermaid
 flowchart TD
-    U[User Task] --> MS[MarkScientist Workflow Layer]
-    MS --> S[Solver Agent]
-    MS --> J[Judge Agent]
-    MS --> E[Evaluator Agent]
-    S --> RH[ResearchHarness Execution Layer]
-    J --> RH
-    E --> RH
-    RH --> P[Base System Prompt]
-    RH --> R[ReAct Loop]
-    RH --> T[Native Tool Calling]
-    RH --> X[Per-Agent Flat Traces]
-    MS --> W[Workflow Scheduling]
-    MS --> A[Role-Specific Prompt Addenda]
-    MS --> Y[Workflow-Level Trace Summary]
+    U[User Task] --> CLI[CLI / Entry Points]
+    CLI --> WF[Workflow Scheduler]
+    WF --> S[Solver]
+    WF --> J[Judge]
+    WF --> E[Evaluator]
+    S --> IL[Improvement Loop]
+    J --> IL
+    IL --> WF
+    WF --> RP[Role Prompt Addenda]
+    WF --> WR[Workflow-Level Trace Summary]
 ```
 
-The internal `MarkScientist` design is intentionally layered:
+The lower-layer execution details live in `ResearchHarness`, and `MarkScientist` connects to them like this:
 
 ```mermaid
 flowchart TD
     subgraph MS[MarkScientist]
-        CLI[CLI / Entry Points] --> WF[Workflow]
-        WF --> AG[Role Agents]
+        WF[Workflow / Scheduling] --> AG[Role Agents]
         AG --> RP[Role Prompts]
         WF --> WR[Workflow Trajectory Wrapper]
     end
