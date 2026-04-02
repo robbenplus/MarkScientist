@@ -107,3 +107,38 @@ def test_run_once_solver_json_output(monkeypatch, capsys, tmp_path: Path):
     payload = json.loads(capsys.readouterr().out)
     assert payload["solver"]["output"] == "solver output"
     assert payload["judge"]["overall_score"] == 7.5
+
+
+def test_run_once_judge_and_evaluator_json_output(monkeypatch, capsys, tmp_path: Path):
+    config = Config(
+        workspace_root=tmp_path,
+        trajectory=TrajectoryConfig(auto_save=False, save_dir=tmp_path / "traces"),
+    )
+
+    monkeypatch.setattr("markscientist.cli.MarkScientistCLI", FakeCLI)
+
+    judge_exit_code = run_once(
+        config,
+        "review this artifact",
+        agent_type="judge",
+        workflow=False,
+        json_output=True,
+        auto_review=False,
+    )
+    assert judge_exit_code == 0
+    judge_payload = json.loads(capsys.readouterr().out)
+    assert judge_payload["overall_score"] == 7.5
+    assert "output" not in judge_payload
+
+    evaluator_exit_code = run_once(
+        config,
+        "evaluate this session",
+        agent_type="evaluator",
+        workflow=False,
+        json_output=True,
+        auto_review=False,
+    )
+    assert evaluator_exit_code == 0
+    evaluator_payload = json.loads(capsys.readouterr().out)
+    assert evaluator_payload["success_probability"] == 0.82
+    assert "output" not in evaluator_payload

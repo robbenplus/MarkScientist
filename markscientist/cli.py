@@ -648,8 +648,15 @@ def run_once(config: Config, task: str, agent_type: str = "solver",
                 console.print(f"[dim]Task: {task[:100]}{'...' if len(task) > 100 else ''}[/dim]")
 
             if json_output:
-                output = cli.run_query(task, agent_type, show_spinner=True)
-                print(json.dumps({"output": output}, ensure_ascii=False, indent=2))
+                if agent_type == "judge":
+                    review = cli.run_judge_review(task, show_spinner=False)
+                    print(json.dumps(review.to_dict(), ensure_ascii=False, indent=2))
+                elif agent_type == "evaluator":
+                    evaluation = cli.run_evaluator_assessment(task, show_spinner=False)
+                    print(json.dumps(evaluation.to_dict(), ensure_ascii=False, indent=2))
+                else:
+                    output = cli.run_query(task, agent_type, show_spinner=True)
+                    print(json.dumps({"output": output}, ensure_ascii=False, indent=2))
             else:
                 if agent_type == "judge":
                     review = cli.run_judge_review(task, show_spinner=True)
