@@ -37,6 +37,7 @@ class WorkflowTraceRecord:
     solver: Optional[AgentTraceRef] = None
     judge: Optional[AgentTraceRef] = None
     evaluator: Optional[AgentTraceRef] = None
+    history: list[AgentTraceRef] = field(default_factory=list)
     final_output_preview: str = ""
     quality_scores: Dict[str, float] = field(default_factory=dict)
     success: bool = False
@@ -60,6 +61,7 @@ class WorkflowTraceRecord:
             metadata=metadata or {},
         )
         setattr(self, agent_type, ref)
+        self.history.append(ref)
 
     def complete(
         self,

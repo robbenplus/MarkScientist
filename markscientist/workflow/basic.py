@@ -97,6 +97,7 @@ class BasicResearchWorkflow:
 
         solver_output = solver_result.output
         iterations = 1
+        accepted_improved_output: Optional[str] = None
 
         judge = self._new_judge(workspace, recorder.trace_path_for("judge"), on_event=on_event)
         judge_review = judge.review(artifact=solver_output, artifact_type="auto")
@@ -124,19 +125,20 @@ class BasicResearchWorkflow:
 
             if judge_review.overall_score >= self.improvement_threshold:
                 solver_output = improved_output
+                accepted_improved_output = improved_output
 
         evaluator_assessment = None
+        final_output = solver_output
         if self.enable_evaluator:
             evaluator = self._new_evaluator(workspace, recorder.trace_path_for("evaluator"), on_event=on_event)
             evaluator_assessment = evaluator.evaluate(
                 original_task=task,
                 solver_output=solver_output,
                 judge_review=judge_review.raw_output,
-                final_result=improved_output or solver_output,
+                final_result=final_output,
             )
             recorder.capture_agent_result("evaluator", evaluator_assessment)
 
-        final_output = improved_output or solver_output
         quality_scores = {"overall_score": judge_review.overall_score, **judge_review.dimension_scores}
         recorder.complete(
             final_output=final_output,
@@ -151,7 +153,7 @@ class BasicResearchWorkflow:
             solver_output=solver_output,
             judge_review=judge_review,
             evaluator_assessment=evaluator_assessment,
-            improved_output=improved_output,
+            improved_output=accepted_improved_output,
             final_score=judge_review.overall_score,
             success=judge_review.overall_score >= self.improvement_threshold,
             iterations=iterations,

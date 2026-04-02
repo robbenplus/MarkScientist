@@ -101,7 +101,9 @@ class MarkScientistCLI:
         self._session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
         self._spinner = SpinnerManager(console)
         self._auto_review = True  # Auto-review mode enabled by default
+        self._last_task = ""
         self._last_output = ""  # Store last solver output for reference
+        self._last_review_raw = ""
 
     def _get_agent(self, agent_type: str):
         """Get agent instance by type."""
@@ -183,59 +185,47 @@ class MarkScientistCLI:
 
         return table
 
+    def _format_evaluator_result(self, evaluation) -> Table:
+        """Format Evaluator result as a compact display."""
+        table = Table(show_header=False, box=None, padding=(0, 1))
+        table.add_column("Label", style="dim")
+        table.add_column("Value")
+
+        table.add_row("Success Prob.", f"{evaluation.success_probability:.2f}")
+        table.add_row("Confidence", f"{evaluation.confidence:.2f}")
+        if evaluation.meta_summary:
+            table.add_row("Summary", evaluation.meta_summary[:120])
+        if evaluation.system_insights:
+            table.add_row("Insights", json.dumps(evaluation.system_insights, ensure_ascii=False)[:160])
+        return table
+
     def run_solver_with_review(self, user_input: str) -> None:
         """Run Solver with automatic Judge review."""
-        from markscientist.agents.judge import JudgeAgent
-
-        # Phase 1: Run Solver
-        self._spinner.start("Solver executing...")
-
         try:
-            solver = self._get_agent("solver")
-            solver_result = solver.run(user_input)
-            self._spinner.stop()
+            payload = self.run_solver_with_review_payload(user_input, show_spinner=True)
+            solver_result = payload["solver_result"]
+            review = payload["review"]
 
-            if not solver_result.success:
-                console.print(f"[red]Solver Error:[/red] {solver_result.termination_reason}")
-                console.print(solver_result.output)
-                return
-
-            # Store and display solver output
-            self._last_output = solver_result.output
             console.print(Panel(
                 solver_result.output,
                 title="[bold blue]Solver Output[/bold blue]",
                 border_style="blue"
             ))
 
-            # Phase 2: Auto-review with Judge
-            if self._auto_review:
+            if review is not None:
                 console.print()
-                # Show all buddies waiting - more lively!
-                from markscientist.buddy import ReviewerBuddy, render_face, REVIEWER_SPECIES
-                all_faces = " ".join([render_face(ReviewerBuddy.from_species(s)) for s in REVIEWER_SPECIES[:4]])
-                self._spinner.start(f"{all_faces} Summoning reviewer...")
+                from markscientist.buddy import ReviewerBuddy, render_face
 
-                judge = self._get_agent("judge")
-                review = judge.review(
-                    artifact=solver_result.output,
-                    artifact_type="auto",
-                )
-                self._spinner.stop()
-
-                # Get the right buddy for this task type
                 review_buddy = ReviewerBuddy.for_task_type(review.task_type)
                 review_buddy.eye = review_buddy.get_mood_eye(review.overall_score)
                 buddy_face = render_face(review_buddy)
 
-                # Buddy arrives with greeting!
                 console.print(f"[{review_buddy.color}]{buddy_face}[/{review_buddy.color}] "
                              f"[{review_buddy.color} bold]{review_buddy.name}[/{review_buddy.color} bold] "
                              f"[dim]appears![/dim] "
                              f"[{review_buddy.color} italic]\"{review_buddy.catchphrase}\"[/{review_buddy.color} italic]")
                 console.print()
 
-                # Display review results
                 review_table = self._format_review_result(review, review_buddy)
                 console.print(Panel(
                     review_table,
@@ -243,7 +233,6 @@ class MarkScientistCLI:
                     border_style=review_buddy.color
                 ))
 
-                # Optional: If score is low, suggest improvement
                 if review.overall_score < 6.0:
                     console.print(
                         f"[dim]Tip: Score is below 6.0. Use [bold]/workflow[/bold] for auto-improvement loop.[/dim]"
@@ -252,6 +241,70 @@ class MarkScientistCLI:
         except Exception as e:
             self._spinner.stop()
             console.print(f"[red]Error:[/red] {str(e)}")
+
+    def run_solver_with_review_payload(self, user_input: str, show_spinner: bool = True) -> dict:
+        if show_spinner:
+            self._spinner.start("Solver executing...")
+
+        solver = self._get_agent("solver")
+        solver_result = solver.run(user_input)
+
+        if show_spinner:
+            self._spinner.stop()
+
+        self._last_task = user_input
+        self._last_output = solver_result.output
+        self._last_review_raw = ""
+
+        if not solver_result.success:
+            raise RuntimeError(f"{solver_result.termination_reason}: {solver_result.output}")
+
+        review = None
+        if self._auto_review:
+            if show_spinner:
+                console.print()
+                from markscientist.buddy import ReviewerBuddy, render_face, REVIEWER_SPECIES
+
+                all_faces = " ".join([render_face(ReviewerBuddy.from_species(s)) for s in REVIEWER_SPECIES[:4]])
+                self._spinner.start(f"{all_faces} Summoning reviewer...")
+
+            judge = self._get_agent("judge")
+            review = judge.review(
+                artifact=solver_result.output,
+                artifact_type="auto",
+            )
+
+            if show_spinner:
+                self._spinner.stop()
+            self._last_review_raw = review.raw_output
+
+        return {
+            "solver_result": solver_result,
+            "review": review,
+        }
+
+    def run_judge_review(self, artifact: str, show_spinner: bool = True):
+        if show_spinner:
+            self._spinner.start("Running judge...")
+        judge = self._get_agent("judge")
+        review = judge.review(artifact=artifact, artifact_type="auto")
+        if show_spinner:
+            self._spinner.stop()
+        return review
+
+    def run_evaluator_assessment(self, task: str, show_spinner: bool = True):
+        if show_spinner:
+            self._spinner.start("Running evaluator...")
+        evaluator = self._get_agent("evaluator")
+        evaluation = evaluator.evaluate(
+            original_task=self._last_task or task,
+            solver_output=self._last_output,
+            judge_review=self._last_review_raw or "No prior judge review available.",
+            final_result=self._last_output,
+        )
+        if show_spinner:
+            self._spinner.stop()
+        return evaluation
 
     def run_query(self, user_input: str, agent_type: Optional[str] = None,
                   show_spinner: bool = True) -> str:
@@ -262,16 +315,20 @@ class MarkScientistCLI:
             self._spinner.start(f"Running {agent_type}...")
 
         try:
+            if agent_type == "judge":
+                review = self.run_judge_review(user_input, show_spinner=show_spinner)
+                return json.dumps(review.to_dict(), ensure_ascii=False, indent=2)
+            if agent_type == "evaluator":
+                evaluation = self.run_evaluator_assessment(user_input, show_spinner=show_spinner)
+                return json.dumps(evaluation.to_dict(), ensure_ascii=False, indent=2)
+
             agent = self._get_agent(agent_type)
             result = agent.run(user_input)
-
             if show_spinner:
                 self._spinner.stop()
-
             if result.success:
                 return result.output
-            else:
-                return f"[Error] {result.termination_reason}: {result.output}"
+            return f"[Error] {result.termination_reason}: {result.output}"
 
         except Exception as e:
             if show_spinner:
@@ -340,16 +397,24 @@ class MarkScientistCLI:
         elif cmd_name == "judge":
             self._current_agent = "judge"
             if cmd_args:
-                result = self.run_query(cmd_args, "judge")
-                console.print(Panel(result, title="[bold yellow]Judge[/bold yellow]", border_style="yellow"))
+                review = self.run_judge_review(cmd_args, show_spinner=True)
+                console.print(Panel(
+                    self._format_review_result(review),
+                    title="[bold yellow]Judge Review[/bold yellow]",
+                    border_style="yellow",
+                ))
                 return None
             return "[green]Switched to Judge agent.[/green] Enter content to review."
 
         elif cmd_name == "evaluator":
             self._current_agent = "evaluator"
             if cmd_args:
-                result = self.run_query(cmd_args, "evaluator")
-                console.print(Panel(result, title="[bold magenta]Evaluator[/bold magenta]", border_style="magenta"))
+                evaluation = self.run_evaluator_assessment(cmd_args, show_spinner=True)
+                console.print(Panel(
+                    self._format_evaluator_result(evaluation),
+                    title="[bold magenta]Evaluator[/bold magenta]",
+                    border_style="magenta",
+                ))
                 return None
             return "[green]Switched to Evaluator agent.[/green] Enter evaluation task."
 
@@ -500,13 +565,28 @@ def run_interactive(config: Config, initial_agent: str = "solver") -> None:
         if cli._current_agent == "solver" and cli._auto_review:
             cli.run_solver_with_review(user_input)
         else:
-            result = cli.run_query(user_input)
-            agent_color = {"solver": "blue", "judge": "yellow", "evaluator": "magenta"}.get(cli._current_agent, "white")
-            console.print(Panel(
-                result,
-                title=f"[bold {agent_color}]{cli._current_agent.capitalize()}[/bold {agent_color}]",
-                border_style=agent_color
-            ))
+            if cli._current_agent == "judge":
+                review = cli.run_judge_review(user_input, show_spinner=True)
+                console.print(Panel(
+                    cli._format_review_result(review),
+                    title="[bold yellow]Judge Review[/bold yellow]",
+                    border_style="yellow",
+                ))
+            elif cli._current_agent == "evaluator":
+                evaluation = cli.run_evaluator_assessment(user_input, show_spinner=True)
+                console.print(Panel(
+                    cli._format_evaluator_result(evaluation),
+                    title="[bold magenta]Evaluator[/bold magenta]",
+                    border_style="magenta",
+                ))
+            else:
+                result = cli.run_query(user_input)
+                agent_color = {"solver": "blue", "judge": "yellow", "evaluator": "magenta"}.get(cli._current_agent, "white")
+                console.print(Panel(
+                    result,
+                    title=f"[bold {agent_color}]{cli._current_agent.capitalize()}[/bold {agent_color}]",
+                    border_style=agent_color
+                ))
 
 
 def run_once(config: Config, task: str, agent_type: str = "solver",
@@ -544,11 +624,22 @@ def run_once(config: Config, task: str, agent_type: str = "solver",
 
         elif agent_type == "solver" and auto_review:
             # Solver with auto-review
-            if not json_output:
+            if json_output:
+                payload = cli.run_solver_with_review_payload(task, show_spinner=False)
+                result = payload["solver_result"]
+                review = payload["review"]
+                print(json.dumps(
+                    {
+                        "solver": result.to_dict(),
+                        "judge": review.to_dict() if review is not None else None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ))
+            else:
                 console.print(f"\n[bold cyan]MarkScientist Solver + Judge[/bold cyan]")
                 console.print(f"[dim]Task: {task[:100]}{'...' if len(task) > 100 else ''}[/dim]")
-
-            cli.run_solver_with_review(task)
+                cli.run_solver_with_review(task)
 
         else:
             # Single agent without review
@@ -556,12 +647,27 @@ def run_once(config: Config, task: str, agent_type: str = "solver",
                 console.print(f"\n[bold cyan]MarkScientist {agent_type.capitalize()}[/bold cyan]")
                 console.print(f"[dim]Task: {task[:100]}{'...' if len(task) > 100 else ''}[/dim]")
 
-            output = cli.run_query(task, agent_type, show_spinner=True)
-
             if json_output:
+                output = cli.run_query(task, agent_type, show_spinner=True)
                 print(json.dumps({"output": output}, ensure_ascii=False, indent=2))
             else:
-                console.print(Panel(output, title=f"[bold]{agent_type.capitalize()}[/bold]"))
+                if agent_type == "judge":
+                    review = cli.run_judge_review(task, show_spinner=True)
+                    console.print(Panel(
+                        cli._format_review_result(review),
+                        title="[bold yellow]Judge Review[/bold yellow]",
+                        border_style="yellow",
+                    ))
+                elif agent_type == "evaluator":
+                    evaluation = cli.run_evaluator_assessment(task, show_spinner=True)
+                    console.print(Panel(
+                        cli._format_evaluator_result(evaluation),
+                        title="[bold magenta]Evaluator[/bold magenta]",
+                        border_style="magenta",
+                    ))
+                else:
+                    output = cli.run_query(task, agent_type, show_spinner=True)
+                    console.print(Panel(output, title=f"[bold]{agent_type.capitalize()}[/bold]"))
 
         return 0
 

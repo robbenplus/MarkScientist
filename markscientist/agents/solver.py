@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from markscientist.config import get_config
-from markscientist.harness import ensure_harness_on_path
 from markscientist.prompts import SOLVER_ROLE_PROMPT
 from markscientist.agents.base import BaseScientistAgent
-
-ensure_harness_on_path(get_config().harness_path)
 
 from agent_base import agent_role
 

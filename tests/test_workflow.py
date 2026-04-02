@@ -121,3 +121,52 @@ def test_workflow_wraps_agent_traces(tmp_path: Path):
     assert "solver" in payload
     assert "judge" in payload
     assert "evaluator" in payload
+    assert "history" in payload
+
+
+class RejectedImprovementWorkflow(DummyWorkflow):
+    def _new_judge(self, workspace, trace_path, on_event=None):
+        if self.fake_judge is None:
+            self.fake_judge = FakeJudge(
+                reviews=[
+                    ReviewResult(
+                        task_type="writing_draft",
+                        overall_score=5.0,
+                        verdict="Needs Improvement",
+                        summary="Too weak.",
+                        raw_output='{"overall_score": 5.0}',
+                    ),
+                    ReviewResult(
+                        task_type="writing_draft",
+                        overall_score=5.5,
+                        verdict="Still Weak",
+                        summary="Not enough improvement.",
+                        raw_output='{"overall_score": 5.5}',
+                    ),
+                ],
+                trace_path=trace_path or workspace / "judge.jsonl",
+            )
+        return self.fake_judge
+
+
+def test_workflow_keeps_last_accepted_output(tmp_path: Path):
+    config = Config(
+        workspace_root=tmp_path,
+        trajectory=TrajectoryConfig(auto_save=True, save_dir=tmp_path / "traces"),
+    )
+    workflow = RejectedImprovementWorkflow(
+        config=config,
+        save_dir=config.trajectory.save_dir,
+        max_improvement_iterations=2,
+    )
+
+    result = workflow.run("Write a literature review.", workspace_root=tmp_path)
+
+    assert result.success is False
+    assert result.solver_output == "initial draft"
+    assert result.improved_output is None
+
+    workflow_json = list((tmp_path / "traces").glob("*_workflow.json"))
+    assert len(workflow_json) == 1
+    payload = workflow_json[0].read_text(encoding="utf-8")
+    assert '"final_output_preview": "initial draft"' in payload

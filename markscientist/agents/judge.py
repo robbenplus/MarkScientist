@@ -5,12 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from markscientist.config import get_config
-from markscientist.harness import ensure_harness_on_path
 from markscientist.agents.base import BaseScientistAgent
 from markscientist.prompts import JUDGE_ROLE_PROMPT, REVIEW_REQUEST_TEMPLATE
-
-ensure_harness_on_path(get_config().harness_path)
 
 from agent_base import agent_role
 

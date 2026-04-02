@@ -33,6 +33,8 @@ pip install -e .
 markscientist
 ```
 
+`MarkScientist` currently assumes a source checkout with the `ResearchHarness` git submodule available. Wheel-only installs are not a supported standalone distribution mode unless you point `RESEARCHHARNESS_PATH` at an external checkout.
+
 ## 🧠 How It Works
 
 `MarkScientist` is not a second execution harness. It is a higher-layer framework built on top of `ResearchHarness`.
@@ -219,11 +221,13 @@ markscientist "Analyze this data" --json
 ```python
 from pathlib import Path
 
-from markscientist.agents import EvaluatorAgent, JudgeAgent, SolverAgent
-from markscientist.config import Config
+from markscientist.config import Config, set_config
 
 config = Config.from_env()
 config.workspace_root = Path("./workspace")
+set_config(config)
+
+from markscientist.agents import EvaluatorAgent, JudgeAgent, SolverAgent
 
 solver = SolverAgent(config=config)
 result = solver.run("Implement binary search")
@@ -261,7 +265,8 @@ print(f"System Insights: {meta.system_insights}")
 /help       Show commands        /workflow   Full pipeline
 /solver     Solver mode          /review     Toggle auto-review
 /judge      Judge mode           /model      Switch model
-/evaluator  Evaluator mode       /clear      New session
+/evaluator  Evaluator mode       /config     Show config
+/clear      New session
 ```
 
 ## 🎯 Task Types
@@ -286,6 +291,8 @@ API_BASE=https://your-openai-compatible-endpoint/v1
 MODEL_NAME=gpt-5.4
 RESEARCHHARNESS_PATH=./vendor/ResearchHarness
 ```
+
+If you need a non-default `ResearchHarness` checkout programmatically, call `set_config(config)` before importing `markscientist.agents`.
 
 ## 🗺️ Roadmap
 
