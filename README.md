@@ -1,29 +1,73 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue.svg" alt="version">
-  <img src="https://img.shields.io/badge/python-3.10+-green.svg" alt="python">
-  <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="license">
-</p>
+<div align="center">
 
-<h1 align="center">🔬 MarkScientist</h1>
+# 🔬 MarkScientist
 
-<p align="center">
-  <b>Self-evolving Research Agent with Built-in Scientific Taste</b>
-</p>
+**A multi-agent scientific workflow layer built on top of ResearchHarness, with Solver, Judge, Evaluator roles and review-driven improvement loops.**
 
-<p align="center">
-  <code>Solver</code> executes → <code>Judge</code> reviews → <code>Evaluator</code> improves
-</p>
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Built On](https://img.shields.io/badge/Built%20On-ResearchHarness-2563eb.svg)](https://github.com/black-yt/ResearchHarness)
+[![Workflow](https://img.shields.io/badge/Workflow-Solver%20Judge%20Evaluator-4f46e5.svg)](#-how-it-works)
+[![Trace](https://img.shields.io/badge/Trace-Workflow%20Summary-0f766e.svg)](#-how-it-works)
+[![Scope](https://img.shields.io/badge/Scope-Orchestration%20Layer-orange.svg)](#-architecture-boundary)
+
+</div>
+
+MarkScientist is a higher-layer framework for running **role-specialized agents**, **review-driven improvement loops**, and **workflow-level evaluation** on top of ResearchHarness.
+
+Unlike a standalone execution harness, this project is intentionally centered on:
+
+- Solver, Judge, and Evaluator role separation
+- iterative review and improvement loops
+- workflow-level traces layered on top of per-agent harness traces
+- higher-level orchestration and evaluation policies
+- a CLI that exposes system behavior across multiple agents
+
+The point is not to replace ResearchHarness. The point is to build a **multi-agent scientific workflow layer** that reuses the lower-layer runtime while adding role structure, review pressure, and orchestration logic.
 
 ---
 
-## ✨ Features
+## 📚 Table of Contents
 
-- **🧱 Built on ResearchHarness** — ResearchHarness owns SDK calls, tool calling, and the ReAct loop; MarkScientist owns multi-agent roles and workflow orchestration
-- **🤖 Three-Agent System** — Solver, Judge, Evaluator working together
-- **🎯 Auto-Review** — Judge automatically scores Solver's output
-- **🐾 Reviewer Buddies** — Fun ASCII characters for different task types
-- **📊 8 Task Types** — Each with appropriate scoring dimensions
-- **💾 Workflow-Level Traces** — Preserve per-agent ResearchHarness traces and a higher-level workflow summary
+- [✨ Highlights](#-highlights)
+- [⚡ Quick Start](#-quick-start)
+- [🧠 How It Works](#-how-it-works)
+- [🧭 Architecture Boundary](#-architecture-boundary)
+- [💬 Usage](#-usage)
+- [🐾 Reviewer Buddies](#-reviewer-buddies)
+- [📋 Commands](#-commands)
+- [🎯 Task Types](#-task-types)
+- [⚙️ Config](#️-config)
+- [🗺️ Roadmap](#️-roadmap)
+- [🪪 License](#-license)
+
+---
+
+## ✨ Highlights
+
+- **Built on ResearchHarness**
+  ResearchHarness owns SDK calls, tool calling, and the ReAct loop; MarkScientist owns multi-agent roles and workflow orchestration.
+- **Three-agent workflow**
+  Solver executes, Judge reviews, and Evaluator inspects system-level behavior.
+- **Review-driven improvement**
+  The workflow can iteratively improve outputs based on Judge feedback instead of stopping at one draft.
+- **Workflow-level traces**
+  MarkScientist preserves per-agent ResearchHarness traces and adds a higher-level workflow summary.
+- **Task-aware review**
+  Judge supports multiple task types with task-appropriate scoring dimensions.
+- **Reviewer buddies**
+  The CLI includes lightweight reviewer personas for more readable interactive evaluation.
+
+### At a Glance
+
+| Area | What MarkScientist focuses on |
+| --- | --- |
+| Runtime dependency | Reuses ResearchHarness for execution |
+| Roles | Solver, Judge, Evaluator |
+| Review model | Score, critique, and improve |
+| Trace model | Workflow summary plus per-agent traces |
+| UX | Interactive multi-agent CLI |
+| Scope | Orchestration layer, not execution harness |
 
 ## 🚀 Quick Start
 
@@ -296,6 +340,6 @@ If you need a non-default `ResearchHarness` checkout programmatically, call `set
 - [ ] v0.3 — Workflow optimization
 - [ ] v1.0 — Stronger workflow policies, richer evaluation, better high-level testing
 
-## 📄 License
+## 🪪 License
 
-MIT
+This project is released under the [MIT License](LICENSE).
