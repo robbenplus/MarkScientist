@@ -15,7 +15,7 @@
 
 </div>
 
-MarkScientist is a higher-layer framework for turning a user request into a **research project workspace**, executing that project, and reviewing the resulting report on top of ResearchHarness.
+MarkScientist is a higher-layer framework for turning a user request into a **research project workspace**, executing that project, and reviewing both the project definition and resulting report on top of ResearchHarness.
 
 Unlike a standalone execution harness, this project is intentionally centered on:
 
@@ -50,17 +50,17 @@ The point is not to replace ResearchHarness. The point is to build a **scientifi
 - **Built on ResearchHarness**
   ResearchHarness owns SDK calls, tool calling, and the ReAct loop; MarkScientist owns multi-agent roles and workflow orchestration.
 - **Three-role research loop**
-  Challenger prepares the project, Solver performs the research, and Judge scores the resulting report.
+  Challenger prepares the project, Solver performs the research, and Judge scores both the project definition and the resulting report.
 - **Project-first execution**
   The workflow is built around a concrete workspace with instructions, checklist, code, outputs, and `report/report.md`.
 - **Review-driven improvement**
   The workflow can iteratively improve outputs based on Judge feedback instead of stopping at one draft.
 - **Conditional re-challenge**
-  Judge can send the workflow back to Challenger when the project definition itself is too weak, not just the report.
+  Judge can send the workflow back to Challenger when the project definition itself is too weak, too toy-like, or not grounded in the available inputs, not just when the report is weak.
 - **Workflow-level traces**
   MarkScientist preserves per-agent ResearchHarness traces and adds a higher-level workflow summary.
 - **Checklist-based judging**
-  Judge scores the report against an explicit challenge brief and checklist rather than vague style preferences.
+  Judge scores the project and report against an explicit challenge brief and checklist rather than vague style preferences.
 
 ### At a Glance
 
@@ -129,30 +129,36 @@ flowchart TD
 
 ## 🗂 Project Model
 
-The workflow prepares and executes a project workspace inspired by benchmark-style research tasks.
+The workflow now separates the Solver-visible execution workspace from Judge-only evaluation materials.
 
 Expected layout:
 
 ```text
 workspace_root/
-  INSTRUCTIONS.md
-  challenge/
-    brief.md
-    checklist.json
-  data/
-  related_work/
-  code/
-  outputs/
-  report/
-    report.md
-    images/
+  public/
+    INSTRUCTIONS.md
+    challenge/
+      brief.md
+      checklist.json
+    data/
+    related_work/
+    code/
+    outputs/
+    report/
+      report.md
+      images/
+  judge/
+    notes.md            # optional judge-only guidance
+    checklist.json      # optional judge-only rubric / hidden criteria
 ```
 
 Role responsibilities:
 
-- `Challenger` prepares `INSTRUCTIONS.md`, `challenge/brief.md`, and `challenge/checklist.json`.
-- `Solver` reads the prepared project, performs the research, and must finish with `report/report.md`.
-- `Judge` reads the brief, checklist, and report, then returns strict JSON scoring feedback plus the next workflow action.
+- `Challenger` works only inside `public/` and prepares the Solver-visible project files.
+- `Solver` works only inside `public/`, performs the research, and must finish with `public/report/report.md`.
+- `Judge` evaluates the public deliverables and may additionally read `judge/` as hidden evaluation material.
+
+This separation is intentional: hidden scoring criteria or target answers should never be exposed through the public project files that the Solver can read.
 
 ## 🧭 Architecture Boundary
 
@@ -191,7 +197,7 @@ Default mode runs the full research workflow.
 
 ╭──────────── Workflow Summary ────────────────╮
 │ Status      Success                          │
-│ Score       7.5/10                           │
+│ Score       75.0/100                        │
 │ Iterations  2                                │
 ╰──────────────────────────────────────────────╯
 ```
@@ -234,6 +240,7 @@ markscientist "Review the current report" --agent judge --json
 from pathlib import Path
 
 from markscientist.config import Config, set_config
+from markscientist.project import ensure_project_layout
 
 config = Config.from_env()
 config.workspace_root = Path("./workspace")
@@ -242,14 +249,16 @@ set_config(config)
 from markscientist.agents import ChallengerAgent, JudgeAgent, SolverAgent
 from markscientist.workflow import ResearchWorkflow
 
-challenger = ChallengerAgent(config=config, workspace_root=config.workspace_root)
-challenger.run("Prepare a research project for the current prompt.", workspace_root=config.workspace_root)
+paths = ensure_project_layout(config.workspace_root)
 
-solver = SolverAgent(config=config, workspace_root=config.workspace_root)
-solver_result = solver.run("Execute the prepared project.", workspace_root=config.workspace_root)
+challenger = ChallengerAgent(config=config, workspace_root=paths.public_root)
+challenger.run("Prepare a research project for the current prompt.", workspace_root=paths.public_root)
 
-judge = JudgeAgent(config=config, workspace_root=config.workspace_root)
-judge_result = judge.run("Review the current report strictly.", workspace_root=config.workspace_root)
+solver = SolverAgent(config=config, workspace_root=paths.public_root)
+solver_result = solver.run("Execute the prepared project.", workspace_root=paths.public_root)
+
+judge = JudgeAgent(config=config, workspace_root=paths.project_root)
+judge_result = judge.run("Review the current report strictly.", workspace_root=paths.project_root)
 
 workflow = ResearchWorkflow(config=config)
 workflow_result = workflow.run("Write a research report", workspace_root=config.workspace_root)
@@ -274,11 +283,17 @@ print(workflow_result.metadata["report_path"])
 API_KEY=your-key
 API_BASE=https://your-openai-compatible-endpoint/v1
 MODEL_NAME=gpt-5.4
+# SUMMARY_MODEL_NAME=gpt-5.4
+SERPER_KEY_ID=your_serper_key
+JINA_API_KEYS=your_jina_key
+MINERU_TOKEN=your_mineru_token
 ```
+
+`MarkScientist` reads `API_KEY`, `API_BASE`, and `MODEL_NAME` directly. The extra keys are included because the underlying `ResearchHarness` tool layer may need them when the workflow uses web search, web fetch, or PDF parsing.
 
 Agent runtime defaults and trajectory defaults live in code. Override them programmatically on `Config(...)` when needed.
 
-If you need a non-default workspace root or `ResearchHarness` checkout, set `config.workspace_root` or `config.harness_path` before creating agents.
+If you need a non-default workspace root, set `config.workspace_root` before creating agents.
 
 ## 🧪 Testing
 

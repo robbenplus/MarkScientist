@@ -5,23 +5,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from markscientist.harness import ensure_harness_on_path
 
-def _load_dotenv(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
+ensure_harness_on_path()
+
+from agent_base.utils import load_dotenv
 
 
 @dataclass
@@ -59,16 +47,15 @@ class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
     trajectory: TrajectoryConfig = field(default_factory=TrajectoryConfig)
     workspace_root: Optional[Path] = None
-    harness_path: Optional[Path] = None
 
     @classmethod
     def from_env(cls, env_path: Optional[Path] = None) -> "Config":
         if env_path:
-            _load_dotenv(env_path)
+            load_dotenv(env_path)
         else:
             default_env = Path(__file__).resolve().parent.parent / ".env"
             if default_env.exists():
-                _load_dotenv(default_env)
+                load_dotenv(default_env)
 
         default_model = ModelConfig()
         default_agent = AgentConfig()

@@ -27,13 +27,15 @@ class FakeCLI(MarkScientistCLI):
         self.challenger = FakeAgent("Challenge files created.")
         self.solver = FakeAgent("Report content")
         self.review = ReviewResult(
-            overall_score=7.5,
+            overall_score=75.0,
+            project_score=72.0,
+            report_score=75.0,
             verdict="Acceptable",
             summary="Solid report.",
             strengths=["Good structure"],
             suggestions=["Add one more validation plot."],
-            checklist_scores=[{"title": "Main Result", "score": 7.5, "reasoning": "Well supported."}],
-            raw_output='{"overall_score": 7.5}',
+            checklist_scores=[{"title": "Main Result", "mode": "objective", "score": 75.0, "reasoning": "Well supported."}],
+            raw_output='{"overall_score": 75.0, "project_score": 72.0, "report_score": 75.0}',
         )
 
     def _get_agent(self, agent_type: str):
@@ -57,22 +59,28 @@ class FakeCLI(MarkScientistCLI):
                     "challenge_output": "Challenge files created.",
                     "solver_output": "Report content",
                     "judge_review": self.review.to_dict(),
-                    "final_score": 7.5,
+                    "final_score": 75.0,
                     "success": True,
                     "iterations": 1,
-                    "metadata": {"report_path": str(self._workspace_root() / "report" / "report.md")},
+                    "metadata": {
+                        "public_workspace_root": str(self._workspace_root() / "public"),
+                        "report_path": str(self._workspace_root() / "public" / "report" / "report.md"),
+                    },
                 }
 
             solver_output = "Report content"
             success = True
-            final_score = 7.5
+            final_score = 75.0
             iterations = 1
             workspace_root = ""
-            metadata = {"report_path": ""}
+            metadata = {"public_workspace_root": "", "report_path": ""}
 
         payload = WorkflowPayload()
         payload.workspace_root = str(self._workspace_root())
-        payload.metadata = {"report_path": str(self._workspace_root() / "report" / "report.md")}
+        payload.metadata = {
+            "public_workspace_root": str(self._workspace_root() / "public"),
+            "report_path": str(self._workspace_root() / "public" / "report" / "report.md"),
+        }
         return payload
 
 
@@ -88,7 +96,7 @@ def test_run_once_workflow_json_output(monkeypatch, capsys, tmp_path: Path):
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["challenge_output"] == "Challenge files created."
-    assert payload["judge_review"]["overall_score"] == 7.5
+    assert payload["judge_review"]["overall_score"] == 75.0
 
 
 def test_run_once_single_agent_json_output(monkeypatch, capsys, tmp_path: Path):
@@ -106,5 +114,6 @@ def test_run_once_single_agent_json_output(monkeypatch, capsys, tmp_path: Path):
     judge_exit = run_once(config, "score current report", agent_type="judge", json_output=True)
     assert judge_exit == 0
     judge_payload = json.loads(capsys.readouterr().out)
-    assert judge_payload["overall_score"] == 7.5
+    assert judge_payload["overall_score"] == 75.0
+    assert judge_payload["project_score"] == 72.0
     assert judge_payload["verdict"] == "Acceptable"

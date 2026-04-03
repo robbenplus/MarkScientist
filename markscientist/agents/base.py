@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 from markscientist.config import Config, get_config
 from markscientist.harness import ensure_harness_on_path
 
-ensure_harness_on_path(get_config().harness_path)
+ensure_harness_on_path()
 
 from agent_base.react_agent import MultiTurnReactAgent
 
@@ -44,7 +44,7 @@ class BaseScientistAgent(MultiTurnReactAgent):
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         self.config = config or get_config()
-        self.harness_root = ensure_harness_on_path(self.config.harness_path)
+        ensure_harness_on_path()
         self.default_workspace_root = Path(workspace_root) if workspace_root else self.config.workspace_root
         self.on_event = on_event
         super().__init__(

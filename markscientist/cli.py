@@ -18,7 +18,14 @@ from rich.spinner import Spinner
 from rich.table import Table
 
 from markscientist.config import Config, get_config, set_config
-from markscientist.project import ensure_project_layout, load_checklist_text, read_text_if_exists
+from markscientist.project import (
+    describe_workspace_inputs,
+    ensure_project_layout,
+    load_checklist_text,
+    load_judge_materials_text,
+    read_text_if_exists,
+    resolve_project_paths,
+)
 
 console = Console()
 _HISTORY_FILE = Path.home() / ".markscientist_history"
@@ -82,6 +89,9 @@ class MarkScientistCLI:
     def _workspace_root(self) -> Path:
         return (self.config.workspace_root or Path.cwd()).expanduser().resolve()
 
+    def _public_workspace_root(self) -> Path:
+        return resolve_project_paths(self._workspace_root()).public_root
+
     def _trace_dir(self, agent_type: str) -> Optional[Path]:
         if not self.config.trajectory.auto_save:
             return None
@@ -90,21 +100,24 @@ class MarkScientistCLI:
     def _get_agent(self, agent_type: str):
         from markscientist.agents import ChallengerAgent, JudgeAgent, SolverAgent
 
-        workspace_root = self._workspace_root()
+        project_root = self._workspace_root()
+        public_root = self._public_workspace_root()
         if agent_type == "challenger":
-            return ChallengerAgent(config=self.config, workspace_root=workspace_root, trace_dir=self._trace_dir(agent_type))
+            return ChallengerAgent(config=self.config, workspace_root=public_root, trace_dir=self._trace_dir(agent_type))
         if agent_type == "solver":
-            return SolverAgent(config=self.config, workspace_root=workspace_root, trace_dir=self._trace_dir(agent_type))
+            return SolverAgent(config=self.config, workspace_root=public_root, trace_dir=self._trace_dir(agent_type))
         if agent_type == "judge":
-            return JudgeAgent(config=self.config, workspace_root=workspace_root, trace_dir=self._trace_dir(agent_type))
+            return JudgeAgent(config=self.config, workspace_root=project_root, trace_dir=self._trace_dir(agent_type))
         raise ValueError(f"Unknown agent type: {agent_type}")
 
     def _format_review_result(self, review) -> Table:
         table = Table(show_header=False, box=None, padding=(0, 1))
         table.add_column("Label", style="dim")
         table.add_column("Value")
-        score_color = "green" if review.overall_score >= 7 else "yellow" if review.overall_score >= 5 else "red"
-        table.add_row("Score", f"[{score_color} bold]{review.overall_score:.1f}/10[/{score_color} bold]")
+        score_color = "green" if review.overall_score >= 70 else "yellow" if review.overall_score >= 50 else "red"
+        table.add_row("Overall", f"[{score_color} bold]{review.overall_score:.1f}/100[/{score_color} bold]")
+        table.add_row("Project", f"{review.project_score:.1f}/100")
+        table.add_row("Report", f"{review.report_score:.1f}/100")
         table.add_row("Verdict", review.verdict or "Unspecified")
         table.add_row("Next", review.next_action)
         if review.summary:
@@ -119,7 +132,8 @@ class MarkScientistCLI:
             f"{'─' * 40}\n"
             f"[bold]Model:[/bold] {self.config.model.model_name}\n"
             f"[bold]Mode:[/bold] {self._mode}\n"
-            f"[bold]Workspace Root:[/bold] {self._workspace_root()}\n"
+            f"[bold]Project Root:[/bold] {self._workspace_root()}\n"
+            f"[bold]Public Workspace:[/bold] {self._public_workspace_root()}\n"
             f"[bold]Save trajectories:[/bold] {self.config.trajectory.auto_save}\n"
             f"[bold]Trajectory dir:[/bold] {self.config.trajectory.save_dir}\n"
         )
@@ -127,17 +141,19 @@ class MarkScientistCLI:
     def run_challenger(self, prompt: str, show_spinner: bool = True):
         from markscientist.prompts import CHALLENGE_REQUEST_TEMPLATE
 
-        workspace_root = self._workspace_root()
-        ensure_project_layout(workspace_root)
+        paths = ensure_project_layout(self._workspace_root())
+        input_inventory = describe_workspace_inputs(paths.public_root)
         if show_spinner:
             self._spinner.start("Challenger preparing project...")
         try:
             result = self._get_agent("challenger").run(
                 CHALLENGE_REQUEST_TEMPLATE.format(
                     original_prompt=prompt,
+                    data_inventory=input_inventory["data_inventory"],
+                    related_work_inventory=input_inventory["related_work_inventory"],
                     additional_guidance="Prepare the initial research project definition for the Solver.",
                 ),
-                workspace_root=workspace_root,
+                workspace_root=paths.public_root,
             )
             return result
         finally:
@@ -147,17 +163,19 @@ class MarkScientistCLI:
     def run_solver(self, prompt: str, additional_guidance: str = "", show_spinner: bool = True):
         from markscientist.prompts import SOLVER_REQUEST_TEMPLATE
 
-        workspace_root = self._workspace_root()
-        ensure_project_layout(workspace_root)
+        paths = ensure_project_layout(self._workspace_root())
+        input_inventory = describe_workspace_inputs(paths.public_root)
         if show_spinner:
             self._spinner.start("Solver executing project...")
         try:
             result = self._get_agent("solver").run(
                 SOLVER_REQUEST_TEMPLATE.format(
                     original_prompt=prompt,
+                    data_inventory=input_inventory["data_inventory"],
+                    related_work_inventory=input_inventory["related_work_inventory"],
                     additional_guidance=additional_guidance or "Complete the prepared project end-to-end.",
                 ),
-                workspace_root=workspace_root,
+                workspace_root=paths.public_root,
             )
             return result
         finally:
@@ -167,10 +185,12 @@ class MarkScientistCLI:
     def run_judge(self, prompt: str, show_spinner: bool = True):
         from markscientist.agents.judge import _build_review_prompt, _parse_review_output
 
-        workspace_root = self._workspace_root()
-        paths = ensure_project_layout(workspace_root)
+        project_root = self._workspace_root()
+        paths = ensure_project_layout(project_root)
+        instructions_text = read_text_if_exists(paths.instructions_path, default="INSTRUCTIONS.md is missing.")
         challenge_brief = read_text_if_exists(paths.challenge_brief_path, default="challenge/brief.md is missing.")
         checklist_text = load_checklist_text(paths.checklist_path)
+        judge_materials_text = load_judge_materials_text(paths)
         report_text = read_text_if_exists(paths.report_path, default="report/report.md is missing.")
         if show_spinner:
             self._spinner.start("Judge reviewing report...")
@@ -178,11 +198,13 @@ class MarkScientistCLI:
             result = self._get_agent("judge").run(
                 _build_review_prompt(
                     original_prompt=prompt,
+                    instructions_text=instructions_text,
                     challenge_brief=challenge_brief,
                     checklist_text=checklist_text,
+                    judge_materials_text=judge_materials_text,
                     report_text=report_text,
                 ),
-                workspace_root=workspace_root,
+                workspace_root=project_root,
             )
             review = _parse_review_output(result.output)
             review.termination_reason = result.termination_reason
@@ -282,9 +304,13 @@ class MarkScientistCLI:
         summary.add_column("Value")
         status = "[green]Success[/green]" if result.success else "[red]Needs Improvement[/red]"
         summary.add_row("Status", status)
-        summary.add_row("Score", f"{result.final_score:.1f}/10")
+        summary.add_row("Score", f"{result.final_score:.1f}/100")
+        if result.judge_review is not None:
+            summary.add_row("Project", f"{result.judge_review.project_score:.1f}/100")
+            summary.add_row("Report", f"{result.judge_review.report_score:.1f}/100")
         summary.add_row("Iterations", str(result.iterations))
         summary.add_row("Workspace", result.workspace_root)
+        summary.add_row("Public", result.metadata.get("public_workspace_root", ""))
         summary.add_row("Report", result.metadata.get("report_path", ""))
         console.print(Panel(summary, title="[bold green]Workflow Summary[/bold green]", border_style="green"))
 

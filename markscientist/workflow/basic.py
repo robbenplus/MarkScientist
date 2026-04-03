@@ -8,7 +8,16 @@ from markscientist.agents.challenger import ChallengerAgent
 from markscientist.agents.judge import JudgeAgent, ReviewResult, _build_review_prompt, _parse_review_output
 from markscientist.agents.solver import SolverAgent
 from markscientist.config import Config, get_config
-from markscientist.project import ensure_project_layout, load_checklist_text, read_text_if_exists
+from markscientist.project import (
+    detect_solver_owned_file_changes,
+    describe_workspace_inputs,
+    ensure_project_layout,
+    load_checklist_text,
+    load_judge_materials_text,
+    missing_public_contract_files,
+    read_text_if_exists,
+    snapshot_solver_owned_files,
+)
 from markscientist.prompts import (
     CHALLENGE_REQUEST_TEMPLATE,
     CHALLENGER_IMPROVEMENT_GUIDANCE_TEMPLATE,
@@ -48,7 +57,7 @@ class ResearchWorkflow:
     def __init__(
         self,
         config: Optional[Config] = None,
-        improvement_threshold: float = 6.0,
+        improvement_threshold: float = 50.0,
         max_iterations: int = 2,
         save_dir: Optional[Path] = None,
     ):
@@ -86,21 +95,25 @@ class ResearchWorkflow:
         *,
         prompt: str,
         report_text: str,
+        instructions_text: str,
         challenge_brief: str,
         checklist_text: str,
-        workspace_root: Path,
+        judge_materials_text: str,
+        project_root: Path,
         recorder: WorkflowTrajectoryRecorder,
         on_event=None,
     ) -> ReviewResult:
-        judge = self._new_judge(workspace_root, recorder.trace_dir_for("judge"), on_event=on_event)
+        judge = self._new_judge(project_root, recorder.trace_dir_for("judge"), on_event=on_event)
         judge_result = judge.run(
             _build_review_prompt(
                 original_prompt=prompt,
+                instructions_text=instructions_text,
                 challenge_brief=challenge_brief,
                 checklist_text=checklist_text,
+                judge_materials_text=judge_materials_text,
                 report_text=report_text,
             ),
-            workspace_root=workspace_root,
+            workspace_root=project_root,
         )
         review = _parse_review_output(judge_result.output)
         review.termination_reason = judge_result.termination_reason
@@ -108,55 +121,135 @@ class ResearchWorkflow:
         recorder.capture_agent_result("judge", review)
         return review
 
+    def _run_challenger_phase(
+        self,
+        *,
+        prompt: str,
+        input_inventory: Dict[str, str],
+        additional_guidance: str,
+        paths,
+        recorder: WorkflowTrajectoryRecorder,
+        on_event=None,
+    ):
+        solver_owned_before = snapshot_solver_owned_files(paths)
+
+        def _challenge_request(guidance: str) -> str:
+            return CHALLENGE_REQUEST_TEMPLATE.format(
+                original_prompt=prompt,
+                data_inventory=input_inventory["data_inventory"],
+                related_work_inventory=input_inventory["related_work_inventory"],
+                additional_guidance=guidance,
+            )
+
+        challenger = self._new_challenger(paths.public_root, recorder.trace_dir_for("challenger"), on_event=on_event)
+        challenge_result = challenger.run(
+            _challenge_request(additional_guidance),
+            workspace_root=paths.public_root,
+        )
+        recorder.capture_agent_result("challenger", challenge_result)
+
+        solver_owned_after = snapshot_solver_owned_files(paths)
+        forbidden_changes = detect_solver_owned_file_changes(solver_owned_before, solver_owned_after)
+        if forbidden_changes:
+            raise RuntimeError(
+                "Challenger modified Solver-owned artifacts during project preparation: "
+                + ", ".join(forbidden_changes)
+            )
+
+        missing_files = missing_public_contract_files(paths)
+        if not missing_files:
+            return challenge_result
+
+        repair_guidance = (
+            additional_guidance
+            + "\n\nThe previous Challenger pass did not create all required public project-definition files. "
+            + "Create the missing files now and stop once they exist. "
+            + "Missing files: "
+            + ", ".join(f"`{path}`" for path in missing_files)
+            + ". Do not do Solver work such as writing analysis code, outputs, figures, or `report/report.md`."
+        )
+        challenger = self._new_challenger(paths.public_root, recorder.trace_dir_for("challenger"), on_event=on_event)
+        challenge_result = challenger.run(
+            _challenge_request(repair_guidance),
+            workspace_root=paths.public_root,
+        )
+        recorder.capture_agent_result("challenger", challenge_result)
+
+        solver_owned_after = snapshot_solver_owned_files(paths)
+        forbidden_changes = detect_solver_owned_file_changes(solver_owned_before, solver_owned_after)
+        if forbidden_changes:
+            raise RuntimeError(
+                "Challenger modified Solver-owned artifacts during project preparation: "
+                + ", ".join(forbidden_changes)
+            )
+
+        missing_files = missing_public_contract_files(paths)
+        if missing_files:
+            raise RuntimeError(
+                "Challenger did not create the required public project-definition files: "
+                + ", ".join(missing_files)
+            )
+        return challenge_result
+
     def run(
         self,
         prompt: str,
         workspace_root: Optional[Path] = None,
         on_event=None,
     ) -> WorkflowResult:
-        workspace_root = (workspace_root or self.config.workspace_root or Path.cwd()).expanduser().resolve()
-        paths = ensure_project_layout(workspace_root)
+        project_root = (workspace_root or self.config.workspace_root or Path.cwd()).expanduser().resolve()
+        paths = ensure_project_layout(project_root)
+        input_inventory = describe_workspace_inputs(paths.public_root)
         recorder = WorkflowTrajectoryRecorder(
             prompt=prompt,
             model_name=self.config.model.model_name,
-            workspace_root=str(paths.workspace_root),
+            workspace_root=str(paths.project_root),
             save_dir=self.save_dir if self.config.trajectory.auto_save else None,
         )
         recorder.record.challenge_brief_path = str(paths.challenge_brief_path)
         recorder.record.checklist_path = str(paths.checklist_path)
         recorder.record.report_path = str(paths.report_path)
 
-        challenger = self._new_challenger(paths.workspace_root, recorder.trace_dir_for("challenger"), on_event=on_event)
-        challenge_result = challenger.run(
-            CHALLENGE_REQUEST_TEMPLATE.format(
-                original_prompt=prompt,
-                additional_guidance="Prepare the initial research project definition for the Solver.",
+        challenge_result = self._run_challenger_phase(
+            prompt=prompt,
+            input_inventory=input_inventory,
+            additional_guidance=(
+                "Prepare only the initial public research project definition for the Solver. "
+                "Do not execute the project, write the report, generate final outputs, or score the result yourself. "
+                "Those are downstream Solver and Judge responsibilities."
             ),
-            workspace_root=paths.workspace_root,
+            paths=paths,
+            recorder=recorder,
+            on_event=on_event,
         )
-        recorder.capture_agent_result("challenger", challenge_result)
 
-        solver = self._new_solver(paths.workspace_root, recorder.trace_dir_for("solver"), on_event=on_event)
+        solver = self._new_solver(paths.public_root, recorder.trace_dir_for("solver"), on_event=on_event)
         solver_result = solver.run(
             SOLVER_REQUEST_TEMPLATE.format(
                 original_prompt=prompt,
+                data_inventory=input_inventory["data_inventory"],
+                related_work_inventory=input_inventory["related_work_inventory"],
                 additional_guidance="Read the prepared project files and complete the project end-to-end.",
             ),
-            workspace_root=paths.workspace_root,
+            workspace_root=paths.public_root,
         )
         recorder.capture_agent_result("solver", solver_result)
 
         iterations = 1
         challenge_output = challenge_result.output
+        instructions_text = read_text_if_exists(paths.instructions_path, default="INSTRUCTIONS.md is missing.")
         challenge_brief = read_text_if_exists(paths.challenge_brief_path, default="challenge/brief.md is missing.")
         checklist_text = load_checklist_text(paths.checklist_path)
+        judge_materials_text = load_judge_materials_text(paths)
         report_text = read_text_if_exists(paths.report_path, default=solver_result.output)
         judge_review = self._judge_report(
             prompt=prompt,
             report_text=report_text,
+            instructions_text=instructions_text,
             challenge_brief=challenge_brief,
             checklist_text=checklist_text,
-            workspace_root=paths.workspace_root,
+            judge_materials_text=judge_materials_text,
+            project_root=paths.project_root,
             recorder=recorder,
             on_event=on_event,
         )
@@ -164,20 +257,23 @@ class ResearchWorkflow:
         while judge_review.overall_score < self.improvement_threshold and iterations < self.max_iterations:
             iterations += 1
             if judge_review.next_action == "rechallenge":
-                challenger = self._new_challenger(paths.workspace_root, recorder.trace_dir_for("challenger"), on_event=on_event)
-                challenge_result = challenger.run(
-                    CHALLENGE_REQUEST_TEMPLATE.format(
-                        original_prompt=prompt,
-                        additional_guidance=CHALLENGER_IMPROVEMENT_GUIDANCE_TEMPLATE.format(
-                            judge_feedback=judge_review.raw_output,
-                        ),
-                    ),
-                    workspace_root=paths.workspace_root,
+                challenge_result = self._run_challenger_phase(
+                    prompt=prompt,
+                    input_inventory=input_inventory,
+                    additional_guidance=CHALLENGER_IMPROVEMENT_GUIDANCE_TEMPLATE.format(
+                        judge_feedback=judge_review.raw_output,
+                    )
+                    + "\n\nDo not execute the project, write the report, generate final outputs, or score the result yourself. "
+                    + "Only revise the public project-definition files.",
+                    paths=paths,
+                    recorder=recorder,
+                    on_event=on_event,
                 )
-                recorder.capture_agent_result("challenger", challenge_result)
                 challenge_output = challenge_result.output
+                instructions_text = read_text_if_exists(paths.instructions_path, default="INSTRUCTIONS.md is missing.")
                 challenge_brief = read_text_if_exists(paths.challenge_brief_path, default="challenge/brief.md is missing.")
                 checklist_text = load_checklist_text(paths.checklist_path)
+                judge_materials_text = load_judge_materials_text(paths)
                 solver_guidance = (
                     "The Challenger revised the project definition. "
                     "Read the updated challenge files from scratch and regenerate the deliverables to match them."
@@ -187,22 +283,26 @@ class ResearchWorkflow:
                     judge_feedback=judge_review.raw_output,
                 )
 
-            solver = self._new_solver(paths.workspace_root, recorder.trace_dir_for("solver"), on_event=on_event)
+            solver = self._new_solver(paths.public_root, recorder.trace_dir_for("solver"), on_event=on_event)
             solver_result = solver.run(
                 SOLVER_REQUEST_TEMPLATE.format(
                     original_prompt=prompt,
+                    data_inventory=input_inventory["data_inventory"],
+                    related_work_inventory=input_inventory["related_work_inventory"],
                     additional_guidance=solver_guidance,
                 ),
-                workspace_root=paths.workspace_root,
+                workspace_root=paths.public_root,
             )
             recorder.capture_agent_result("solver", solver_result)
             report_text = read_text_if_exists(paths.report_path, default=solver_result.output)
             judge_review = self._judge_report(
                 prompt=prompt,
                 report_text=report_text,
+                instructions_text=instructions_text,
                 challenge_brief=challenge_brief,
                 checklist_text=checklist_text,
-                workspace_root=paths.workspace_root,
+                judge_materials_text=judge_materials_text,
+                project_root=paths.project_root,
                 recorder=recorder,
                 on_event=on_event,
             )
@@ -212,9 +312,14 @@ class ResearchWorkflow:
             final_output=final_output,
             success=judge_review.overall_score >= self.improvement_threshold,
             iterations=iterations,
-            quality_scores={"overall_score": judge_review.overall_score},
+            quality_scores={
+                "overall_score": judge_review.overall_score,
+                "project_score": judge_review.project_score,
+                "report_score": judge_review.report_score,
+            },
             metadata={
-                "workspace_root": str(paths.workspace_root),
+                "workspace_root": str(paths.project_root),
+                "public_workspace_root": str(paths.public_root),
                 "challenge_brief_path": str(paths.challenge_brief_path),
                 "checklist_path": str(paths.checklist_path),
                 "report_path": str(paths.report_path),
@@ -223,7 +328,7 @@ class ResearchWorkflow:
 
         return WorkflowResult(
             prompt=prompt,
-            workspace_root=str(paths.workspace_root),
+            workspace_root=str(paths.project_root),
             challenge_output=challenge_output,
             solver_output=final_output,
             judge_review=judge_review,
@@ -232,6 +337,7 @@ class ResearchWorkflow:
             iterations=iterations,
             metadata={
                 "workflow_id": recorder.record.workflow_id,
+                "public_workspace_root": str(paths.public_root),
                 "challenge_brief_path": str(paths.challenge_brief_path),
                 "checklist_path": str(paths.checklist_path),
                 "report_path": str(paths.report_path),
