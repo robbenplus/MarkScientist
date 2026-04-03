@@ -2,7 +2,9 @@
 
 # 🔬 MarkScientist
 
-**A multi-agent scientific workflow layer built on top of ResearchHarness, with Solver, Judge, Evaluator roles and review-driven improvement loops.**
+*Self-evolving Research Agent with Built-in Scientific Taste*
+
+`Solver` executes → `Judge` reviews → `Evaluator` improves
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
