@@ -2,7 +2,7 @@
 
 # 🔬 MarkScientist
 
-**Self-evolving Research Agent with Built-in Scientific Taste**
+**Self-evolving Research Agent with Built-in Scientific Taste and Taste Learning**
 
 **Challenger prepares → Solver researches → Judge reviews**
 
@@ -21,6 +21,7 @@ MarkScientist is a higher-layer framework for turning a user request into a **re
 Unlike a standalone execution harness, this project is intentionally centered on:
 
 - Challenger, Solver, and Judge role separation
+- Taste Learning as a core Judge calibration feature
 - project-first research workflows
 - review-driven improvement loops
 - workflow-level traces layered on top of per-agent harness traces
@@ -105,28 +106,26 @@ markscientist
 
 ```mermaid
 flowchart TD
-    subgraph JPS[Judge Panel System]
+    subgraph JPS[Judge System]
         META[15 Scenarios · 12 Perspectives · 5 Skills]
         SK[Skill Library<br/>markscientist/skills/*/SKILL.md]
-        TL[Taste Learning / Score Calibration]
-        META --> SK
+        TL[Taste Learning]
+        SK --> META
         TL --> META
     end
 
     U[User Prompt] --> WF[Workflow Scheduler]
     WF --> C[Challenger]
-    C --> P[Prepared Project Workspace]
-    P --> PRC[Project Review Contract]
+    C --> P[Prepared Project]
     P --> S[Solver]
-    S --> R[report/report.md]
+    S --> R[Report]
     R --> J[Judge Panel]
     J --> F{Next Action}
     F -->|solver_revision| S
     F -->|rechallenge| C
     F -->|accept| DONE[Workflow Complete]
-    S -. revised report .-> J
     J -. uses .-> META
-    FB[task/target_study/feedback_history.jsonl] -. feeds .-> TL
+    FB[feedback_history.jsonl] -. drives .-> TL
     TL -. calibrates .-> J
     WF --> T[Workflow Trace Summary]
 ```
