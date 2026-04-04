@@ -115,15 +115,16 @@ flowchart TD
     SK[Skill]
     TL[Taste Learning]
 
-    U --> C
-    C --> P
-    P --> S
-    S --> R
-    R --> J
-    J --> S
-    J --> C
-    SK --> J
-    TL --> J
+    U -->|research request| C
+    C -->|prepare project| P
+    P -->|execution package| S
+    S -->|write report| R
+    R -->|submit for review| J
+    J -->|solver revision| S
+    J -->|rechallenge| C
+    SK -->|review skill| J
+    J -->|update taste signals| TL
+    TL -->|apply learned calibration| J
 ```
 
 The lower-layer execution details live in `ResearchHarness`, and `MarkScientist` connects to them like this:
