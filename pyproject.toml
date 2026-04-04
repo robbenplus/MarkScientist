@@ -32,6 +32,11 @@ dev = [
 [project.scripts]
 markscientist = "markscientist.cli:main"
 
+[tool.hatch.build]
+include = [
+    "markscientist/skills/**/SKILL.md",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["markscientist"]
 

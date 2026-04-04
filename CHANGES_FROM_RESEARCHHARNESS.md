@@ -37,7 +37,7 @@ Instead:
 - `MarkScientist` no longer maintains its own model-backend abstraction layer
 - all agent execution flows go through ResearchHarness
 - Challenger, Solver, and Judge all subclass the same lower-layer ResearchHarness base agent
-- Challenger prepares `INSTRUCTIONS.md`, `challenge/brief.md`, and `challenge/checklist.json`
+- Challenger prepares the private `task/` package, including `task/task_info.json` and hidden `task/target_study/checklist.json`, and the harness derives the public `INSTRUCTIONS.md` task contract from that private task.
 - Solver is responsible for producing `report/report.md`
 - Judge reviews the report against the prepared checklist and returns JSON scoring feedback
 - workflow trace files now wrap per-agent ResearchHarness traces instead of redefining the full flat-trace format

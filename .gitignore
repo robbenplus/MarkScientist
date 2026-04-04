@@ -51,7 +51,7 @@ htmlcov/
 .nox/
 
 # Trajectory data (keep structure, ignore content)
-data/trajectories/*.jsonl
+data/trajectories/*
 !data/trajectories/.gitkeep
 
 # Temporary files

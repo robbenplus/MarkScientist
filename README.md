@@ -10,6 +10,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Built On](https://img.shields.io/badge/Built%20On-ResearchHarness-2563eb.svg)](https://github.com/black-yt/ResearchHarness)
 [![Workflow](https://img.shields.io/badge/Workflow-Challenger%20Solver%20Judge-4f46e5.svg)](#-how-it-works)
+[![Taste Learning](https://img.shields.io/badge/Taste%20Learning-Visible%20Calibration-f59e0b.svg)](#-how-it-works)
 [![Trace](https://img.shields.io/badge/Trace-Workflow%20Summary-0f766e.svg)](#-how-it-works)
 [![Scope](https://img.shields.io/badge/Scope-Scientific%20Workflow-orange.svg)](#-architecture-boundary)
 
@@ -50,10 +51,12 @@ The point is not to replace ResearchHarness. The point is to build a **scientifi
 
 - **Built on ResearchHarness**
   ResearchHarness owns SDK calls, tool calling, and the ReAct loop; MarkScientist owns multi-agent roles and workflow orchestration.
+- **Taste learning as a first-class feature**
+  Judge standards can be calibrated from a visible workspace feedback log instead of hidden machine-local state.
 - **Three-role research loop**
   Challenger prepares the project, Solver performs the research, and Judge scores both the project definition and the resulting report.
 - **Project-first execution**
-  The workflow is built around a concrete workspace with instructions, checklist, code, outputs, and `report/report.md`.
+  The workflow is built around a concrete workspace with staged inputs, a public execution package, hidden judge criteria, code, outputs, and `report/report.md`.
 - **Review-driven improvement**
   The workflow can iteratively improve outputs based on Judge feedback instead of stopping at one draft.
 - **Conditional re-challenge**
@@ -61,13 +64,15 @@ The point is not to replace ResearchHarness. The point is to build a **scientifi
 - **Workflow-level traces**
   MarkScientist preserves per-agent ResearchHarness traces and adds a higher-level workflow summary.
 - **Checklist-based judging**
-  Judge scores the project and report against an explicit challenge brief and checklist rather than vague style preferences.
+  Judge scores the project and report against an explicit `INSTRUCTIONS.md` task contract and a hidden judge checklist rather than vague style preferences.
 - **Scenario-aware Judge policies**
   Judge uses explicit review policies that combine scenario, reviewer perspective, and scoring skill instead of one generic review prompt.
+- **Judge skill library**
+  The scoring skills are stored as standard markdown skills under `markscientist/skills/*/SKILL.md`, not hard-coded prompt blobs.
 - **Multi-reviewer Judge panels**
   Judge simulates multiple specialized reviewers and aggregates them into one final benchmark decision.
 - **Visible taste learning**
-  Optional score calibration can be learned from a visible workspace feedback log instead of hidden machine-local state.
+  `task/target_study/feedback_history.jsonl` keeps calibration inputs inside the project workspace, so score shifts are inspectable and reproducible.
 
 ### At a Glance
 
@@ -77,7 +82,9 @@ The point is not to replace ResearchHarness. The point is to build a **scientifi
 | Roles | Challenger, Solver, Judge |
 | Core artifact | A prepared research project workspace |
 | Review model | Score, critique, and improve the report |
-| Judge policy model | scenario × perspective × skill |
+| Judge system | 15 scenarios × 12 perspectives × 5 skills |
+| Skill storage | `markscientist/skills/*/SKILL.md` |
+| Taste learning | Visible workspace feedback calibration |
 | Trace model | Workflow summary plus per-agent traces |
 | UX | Interactive multi-agent CLI |
 | Scope | Scientific workflow layer, not execution harness |
@@ -98,10 +105,18 @@ markscientist
 
 ```mermaid
 flowchart TD
+    subgraph JPS[Judge Panel System]
+        META[15 Scenarios · 12 Perspectives · 5 Skills]
+        SK[Skill Library<br/>markscientist/skills/*/SKILL.md]
+        TL[Taste Learning]
+        META --> SK
+        TL --> META
+    end
+
     U[User Prompt] --> WF[Workflow Scheduler]
     WF --> C[Challenger]
     C --> P[Prepared Project Workspace]
-    P --> JP[Project Review Contract]
+    P --> PRC[Project Review Contract]
     P --> S[Solver]
     S --> R[report/report.md]
     R --> J[Judge Panel]
@@ -110,6 +125,8 @@ flowchart TD
     F -->|rechallenge| C
     F -->|accept| DONE[Workflow Complete]
     S -. revised report .-> J
+    J -. uses .-> META
+    FB[task/target_study/feedback_history.jsonl] -. calibrates .-> TL
     WF --> T[Workflow Trace Summary]
 ```
 
@@ -145,31 +162,35 @@ Expected layout:
 
 ```text
 workspace_root/
+  task/
+    task_info.json     # private ResearchClawBench-style task contract
+    data/              # canonical source data created/curated by Challenger
+    related_work/      # canonical real source PDFs created/curated by Challenger
+    target_study/
+      paper.pdf        # hidden target-study anchor PDF
+      checklist.json   # hidden judge rubric
+      images/          # optional hidden reference images
+      feedback_history.jsonl  # optional visible taste-learning log for judge calibration
   public/
     INSTRUCTIONS.md
-    challenge/
-      brief.md
-      checklist.json
-    data/
-    related_work/
+    data/              # solver-visible staged subset of task/data/
+    related_work/      # solver-visible staged subset of task/related_work/ (starts as PDFs; solver tools may later create local extracted sidecars)
     code/
     outputs/
     report/
       report.md
       images/
-  judge/
-    notes.md            # optional judge-only guidance
-    checklist.json      # optional judge-only rubric / hidden criteria
-    feedback_history.jsonl  # optional visible taste-learning feedback log
 ```
 
 Role responsibilities:
 
-- `Challenger` works only inside `public/` and prepares the Solver-visible project files.
+- `Challenger` works at the private task level and builds the project from scratch when needed: it creates or curates canonical source materials under `task/data/` and `task/related_work/`, writes `task/task_info.json`, writes the hidden `task/target_study/*` assets, and then the harness exports the solver-visible subset into `public/`.
+- `task/data/` is for canonical data artifacts only. It should contain datasets or data directories, not literature PDFs. Real PDF references belong under `task/related_work/` or `task/target_study/`.
+- Solver-visible related work should come from real source PDFs in `task/related_work/`, or from genuinely downloaded PDFs that Challenger first saves under `task/related_work/` and then stages into `public/related_work/`. Placeholder PDFs or fabricated paper files are not valid project inputs.
 - `Solver` works only inside `public/`, performs the research, and must finish with `public/report/report.md`.
-- `Judge` evaluates the public deliverables and may additionally read `judge/` as hidden evaluation material.
+- `Judge` evaluates the public deliverables and may additionally read hidden materials under `task/target_study/`.
 
-This separation is intentional: hidden scoring criteria or target answers should never be exposed through the public project files that the Solver can read.
+This separation is intentional: hidden scoring criteria or target answers should never be exposed through the public project files that the Solver can read, but the Challenger is still responsible for constructing the canonical source materials and packaging the full executable project.
 
 ## 🧪 Judge Model
 
@@ -179,25 +200,52 @@ The current Judge keeps the simple `Challenger / Solver / Judge` architecture, b
 - **Perspective**: which specialized reviewer viewpoint to emulate
 - **Skill**: which scoring style to emulate
 
-Built-in Judge scenarios:
+The exact scoring skills are stored as standard markdown skill files:
+
+- `markscientist/skills/judge-geval/SKILL.md`
+- `markscientist/skills/judge-prometheus/SKILL.md`
+- `markscientist/skills/judge-pairwise/SKILL.md`
+- `markscientist/skills/judge-pandalm/SKILL.md`
+- `markscientist/skills/judge-judgelm/SKILL.md`
+
+The policy system currently defines 15 built-in Judge scenarios:
 
 | Scenario | What it emphasizes |
 | --- | --- |
+| `idea_generation` | early research idea quality before project commitment |
+| `novelty_check` | differentiation from prior work |
 | `project_definition` | grounding, scope, executability, scientific value, non-toy quality |
+| `experiment_design` | methodology, controls, and reproducibility before execution |
+| `result_analysis` | correctness, interpretation, and uncertainty handling |
 | `research_report` | methodology, evidence, results, limitations, reproducibility |
 | `claim_validation` | evidence support, claim scope, overclaim risk |
-| `revision_comparison` | improvement, regression risk, evidence gain, checklist progress |
+| `ablation_review` | ablation quality and variable isolation |
+| `paper_outline` | paper structure and completeness |
+| `section_draft` | section-level scientific writing quality |
+| `figure_table` | scientific usefulness of figures and tables |
+| `rebuttal` | rebuttal responsiveness and evidence use |
+| `revision` | whether a revised artifact materially improved |
+| `code_review` | code correctness and engineering quality |
+| `literature_review` | literature coverage, synthesis, and recency |
 
-Current reviewer perspectives:
+The default workflow mainly uses `project_definition` and `research_report`, while the remaining scenarios stay available for stricter or more specialized review passes.
+
+Built-in reviewer perspectives:
 
 | Perspective | Focus |
 | --- | --- |
 | `senior_reviewer` | overall decision quality |
+| `novelty_critic` | originality and overlap with prior work |
 | `methods_expert` | design rigor and scope control |
+| `statistics_expert` | quantitative validity and uncertainty handling |
+| `writing_expert` | clarity, structure, and presentation |
+| `domain_expert` | domain-specific technical correctness |
 | `literature_expert` | prior work coverage and positioning |
+| `code_expert` | implementation correctness and engineering quality |
 | `reproducibility_advocate` | artifact completeness |
 | `skeptic` | unsupported claims and overclaim detection |
 | `area_chair` | balanced final judgment |
+| `visualization_expert` | figure and table quality |
 
 Current scoring skills:
 
@@ -206,6 +254,7 @@ Current scoring skills:
 | `geval` | multi-dimensional rubric scoring |
 | `prometheus` | strict criterion-by-criterion grading |
 | `pairwise` | before-after comparison |
+| `pandalm` | balanced full-artifact evaluation with calibrated tie handling |
 | `judgelm` | evidence-heavy judgment and claim scrutiny |
 
 The public workflow currently uses reviewer panels internally:
@@ -214,7 +263,7 @@ The public workflow currently uses reviewer panels internally:
 - report panel defaults to `area_chair × judgelm`, `skeptic × geval`, and `reproducibility_advocate × prometheus`
 - claim validation remains available as an explicit report-review scenario when a caller chooses it programmatically, and it uses its own panel composition
 
-Taste calibration is visible and optional. If `judge/feedback_history.jsonl` exists inside the current project workspace, Judge can apply small score offsets derived from repeated user feedback. Calibrations are keyed by the full reviewer identity (`scenario + perspective + skill`), which keeps different judging modes from contaminating each other. This keeps taste learning inside the workspace instead of relying on hidden machine-local files.
+Taste learning is visible and optional. If `task/target_study/feedback_history.jsonl` exists inside the current project workspace, Judge can apply small score offsets derived from repeated user feedback. Calibrations are keyed by the full reviewer identity (`scenario + perspective + skill`), which keeps different judging modes from contaminating each other. This keeps taste learning inside the workspace instead of relying on hidden machine-local files, and makes every calibration source inspectable by the user.
 
 ## 🧭 Architecture Boundary
 
@@ -268,7 +317,7 @@ Switch to a single role when needed:
 [solver] > Execute the prepared project and write the report.
 
 [solver] > /judge
-[judge] > Score the current report against the project checklist.
+[judge] > Score the current report against the hidden judge checklist.
 ```
 
 ### CLI One-Shot Commands
@@ -308,8 +357,8 @@ from markscientist.workflow import ResearchWorkflow
 
 paths = ensure_project_layout(config.workspace_root)
 
-challenger = ChallengerAgent(config=config, workspace_root=paths.public_root)
-challenger.run("Prepare a research project for the current prompt.", workspace_root=paths.public_root)
+challenger = ChallengerAgent(config=config, workspace_root=paths.project_root)
+challenger.run("Prepare a research project for the current prompt.", workspace_root=paths.project_root)
 
 solver = SolverAgent(config=config, workspace_root=paths.public_root)
 solver_result = solver.run("Execute the prepared project.", workspace_root=paths.public_root)
@@ -318,8 +367,7 @@ judge = JudgeAgent(config=config, workspace_root=paths.project_root)
 judge_result = judge.review_project_report(
     original_prompt="Review the current report strictly.",
     instructions_text=paths.instructions_path.read_text(encoding="utf-8"),
-    challenge_brief=paths.challenge_brief_path.read_text(encoding="utf-8"),
-    checklist_text=paths.checklist_path.read_text(encoding="utf-8"),
+    checklist_text=paths.judge_checklist_path.read_text(encoding="utf-8"),
     judge_materials_text="",
     report_text=paths.report_path.read_text(encoding="utf-8"),
     report_scenario=JudgeScenario.RESEARCH_REPORT,

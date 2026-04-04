@@ -20,6 +20,7 @@ from rich.table import Table
 from markscientist.config import Config, get_config, set_config
 from markscientist.judging import JudgeScenario
 from markscientist.project import (
+    describe_challenger_inputs,
     describe_workspace_inputs,
     ensure_project_layout,
     load_checklist_text,
@@ -104,7 +105,7 @@ class MarkScientistCLI:
         project_root = self._workspace_root()
         public_root = self._public_workspace_root()
         if agent_type == "challenger":
-            return ChallengerAgent(config=self.config, workspace_root=public_root, trace_dir=self._trace_dir(agent_type))
+            return ChallengerAgent(config=self.config, workspace_root=project_root, trace_dir=self._trace_dir(agent_type))
         if agent_type == "solver":
             return SolverAgent(config=self.config, workspace_root=public_root, trace_dir=self._trace_dir(agent_type))
         if agent_type == "judge":
@@ -145,18 +146,20 @@ class MarkScientistCLI:
         from markscientist.prompts import CHALLENGE_REQUEST_TEMPLATE
 
         paths = ensure_project_layout(self._workspace_root())
-        input_inventory = describe_workspace_inputs(paths.public_root)
+        input_inventory = describe_challenger_inputs(paths)
         if show_spinner:
             self._spinner.start("Challenger preparing project...")
         try:
             result = self._get_agent("challenger").run(
                 CHALLENGE_REQUEST_TEMPLATE.format(
                     original_prompt=prompt,
-                    data_inventory=input_inventory["data_inventory"],
-                    related_work_inventory=input_inventory["related_work_inventory"],
+                    source_data_inventory=input_inventory["source_data_inventory"],
+                    source_related_work_inventory=input_inventory["source_related_work_inventory"],
+                    public_data_inventory=input_inventory["public_data_inventory"],
+                    public_related_work_inventory=input_inventory["public_related_work_inventory"],
                     additional_guidance="Prepare the initial research project definition for the Solver.",
                 ),
-                workspace_root=paths.public_root,
+                workspace_root=paths.project_root,
             )
             return result
         finally:
@@ -189,8 +192,7 @@ class MarkScientistCLI:
         project_root = self._workspace_root()
         paths = ensure_project_layout(project_root)
         instructions_text = read_text_if_exists(paths.instructions_path, default="INSTRUCTIONS.md is missing.")
-        challenge_brief = read_text_if_exists(paths.challenge_brief_path, default="challenge/brief.md is missing.")
-        checklist_text = load_checklist_text(paths.checklist_path)
+        checklist_text = load_checklist_text(paths.judge_checklist_path)
         judge_materials_text = load_judge_materials_text(paths)
         report_text = read_text_if_exists(paths.report_path, default="report/report.md is missing.")
         taste_feedback_path = paths.judge_feedback_path if paths.judge_feedback_path.exists() else None
@@ -201,7 +203,6 @@ class MarkScientistCLI:
             review = judge.review_project_report(
                 original_prompt=prompt,
                 instructions_text=instructions_text,
-                challenge_brief=challenge_brief,
                 checklist_text=checklist_text,
                 judge_materials_text=judge_materials_text,
                 report_text=report_text,

@@ -38,7 +38,6 @@ class WorkflowTraceRecord:
     solver: Optional[AgentTraceRef] = None
     judge: Optional[AgentTraceRef] = None
     history: list[AgentTraceRef] = field(default_factory=list)
-    challenge_brief_path: str = ""
     checklist_path: str = ""
     report_path: str = ""
     final_output_preview: str = ""

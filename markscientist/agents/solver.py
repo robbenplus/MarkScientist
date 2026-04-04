@@ -11,3 +11,5 @@ class SolverAgent(BaseScientistAgent):
     """Execution agent for prepared research projects."""
 
     agent_type = "solver"
+    max_llm_calls_override = 80
+    max_runtime_seconds_override = 7200

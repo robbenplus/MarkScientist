@@ -31,11 +31,13 @@ def test_agents_inherit_research_harness(tmp_path: Path):
     assert isinstance(solver, MultiTurnReactAgent)
     assert isinstance(judge, MultiTurnReactAgent)
 
-    assert challenger.tool_names == ["Glob", "Grep", "Read", "Write", "Edit", "Bash"]
+    assert challenger.tool_names == ["Glob", "Grep", "Read", "ReadPDF", "Write", "Edit", "Bash", "WebSearch", "ScholarSearch"]
     assert solver.tool_names
     assert judge.tool_names == []
     assert solver._llm_api_key == "test-key"
     assert solver._llm_api_base == "https://example.invalid/v1"
+    assert challenger.max_llm_calls == 8
+    assert judge.max_llm_calls == 12
     assert "Challenger agent of MarkScientist" in challenger.role_prompt
     assert "Solver agent of MarkScientist" in solver.role_prompt
     assert "Judge agent of MarkScientist" in judge.role_prompt

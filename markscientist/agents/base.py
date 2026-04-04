@@ -32,6 +32,8 @@ class BaseScientistAgent(MultiTurnReactAgent):
     """MarkScientist base agent built on top of ResearchHarness."""
 
     agent_type: str = "agent"
+    max_llm_calls_override: int | None = None
+    max_runtime_seconds_override: int | None = None
 
     def __init__(
         self,
@@ -52,8 +54,8 @@ class BaseScientistAgent(MultiTurnReactAgent):
             llm=self._build_llm_config(self.config),
             trace_dir=str(trace_dir) if trace_dir else None,
             role_prompt=role_prompt,
-            max_llm_calls=self.config.agent.max_llm_calls,
-            max_runtime_seconds=self.config.agent.max_runtime_seconds,
+            max_llm_calls=self.max_llm_calls_override or self.config.agent.max_llm_calls,
+            max_runtime_seconds=self.max_runtime_seconds_override or self.config.agent.max_runtime_seconds,
         )
 
     @staticmethod

@@ -9,6 +9,7 @@ from markscientist.judging import (
     build_judge_policy,
     default_project_panel,
     default_report_panel,
+    load_judge_skill_doc,
     load_taste_profile,
     policy_key_for,
 )
@@ -38,7 +39,6 @@ def test_build_review_prompt_includes_policy_blocks():
     prompt = _build_review_prompt(
         original_prompt="Study the dataset.",
         instructions_text="Write report/report.md.",
-        challenge_brief="Benchmark-style brief.",
         checklist_text="Need strong claim support and a main figure.",
         judge_materials_text="Judge-only hidden rubric.",
         report_text="# Report",
@@ -63,6 +63,17 @@ def test_default_panels_are_multi_reviewer_and_skill_aware():
     assert len({policy.skill for policy in project_panel}) == 3
 
 
+def test_judge_skill_docs_are_loaded_from_markdown():
+    skill_doc = load_judge_skill_doc(JudgeSkill.JUDGELM)
+
+    assert skill_doc.relative_path.endswith("judge-judgelm/SKILL.md")
+    assert skill_doc.name == "judge-judgelm"
+    assert skill_doc.description
+    assert skill_doc.evaluation_workflow
+    assert skill_doc.output_contract
+    assert skill_doc.bias_controls
+
+
 def test_build_judge_policy_uses_explicit_scenario():
     policy = build_judge_policy(
         JudgeScenario.CLAIM_VALIDATION,
@@ -72,6 +83,8 @@ def test_build_judge_policy_uses_explicit_scenario():
 
     assert policy.scenario == JudgeScenario.CLAIM_VALIDATION
     assert "evidence_support" in policy.dimensions
+    assert policy.skill_path.endswith("judge-judgelm/SKILL.md")
+    assert policy.skill_workflow
 
 
 def test_load_taste_profile_is_empty_without_explicit_path():
@@ -138,6 +151,23 @@ def test_review_result_parses_named_confidence():
     assert review.panel_reviews[0]["perspective"] == "skeptic"
 
 
+def test_review_result_preserves_accept_next_action():
+    review = _parse_review_output(
+        json.dumps(
+            {
+                "overall_score": 82,
+                "project_score": 84,
+                "report_score": 82,
+                "summary": "Strong enough to stop.",
+                "next_action": "accept",
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    assert review.next_action == "accept"
+
+
 def test_judge_review_project_report_uses_explicit_report_panel():
     agent = _stub_judge_agent(
         {
@@ -168,7 +198,6 @@ def test_judge_review_project_report_uses_explicit_report_panel():
         agent,
         original_prompt="Review the current report.",
         instructions_text="Write report/report.md.",
-        challenge_brief="Benchmark-style brief.",
         checklist_text="Use strict claim validation.",
         judge_materials_text="Judge-only notes.",
         report_text="# Report",

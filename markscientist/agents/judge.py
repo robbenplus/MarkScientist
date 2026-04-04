@@ -81,7 +81,6 @@ def _build_review_prompt(
     *,
     original_prompt: str,
     instructions_text: str,
-    challenge_brief: str,
     checklist_text: str,
     judge_materials_text: str,
     report_text: str,
@@ -93,7 +92,6 @@ def _build_review_prompt(
     return JUDGE_REQUEST_TEMPLATE.format(
         original_prompt=original_prompt,
         instructions_text=instructions_text,
-        challenge_brief=challenge_brief,
         checklist_text=checklist_text,
         judge_materials_text=judge_materials_text or "No judge-only materials were provided.",
         report_text=report_text,
@@ -144,7 +142,12 @@ def _parse_review_output(raw_output: str) -> ReviewResult:
     review.verdict = data.get("verdict", "")
     review.summary = data.get("summary", "")
     next_action = str(data.get("next_action", "solver_revision")).strip().lower()
-    review.next_action = "rechallenge" if next_action == "rechallenge" else "solver_revision"
+    if next_action == "rechallenge":
+        review.next_action = "rechallenge"
+    elif next_action == "accept":
+        review.next_action = "accept"
+    else:
+        review.next_action = "solver_revision"
     review.strengths = data.get("strengths", [])
     review.weaknesses = data.get("weaknesses", [])
     review.suggestions = data.get("suggestions", [])
@@ -216,13 +219,14 @@ class JudgeAgent(BaseScientistAgent):
     """Strict report reviewer for prepared research projects."""
 
     agent_type = "judge"
+    max_llm_calls_override = 12
+    max_runtime_seconds_override = 900
 
     def review_project_report(
         self,
         *,
         original_prompt: str,
         instructions_text: str,
-        challenge_brief: str,
         checklist_text: str,
         judge_materials_text: str,
         report_text: str,
@@ -236,7 +240,6 @@ class JudgeAgent(BaseScientistAgent):
             _build_review_prompt(
                 original_prompt=original_prompt,
                 instructions_text=instructions_text,
-                challenge_brief=challenge_brief,
                 checklist_text=checklist_text,
                 judge_materials_text=judge_materials_text,
                 report_text=report_text,
