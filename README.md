@@ -106,28 +106,24 @@ markscientist
 
 ```mermaid
 flowchart TD
-    subgraph JPS[Judge System]
-        META[15 Scenarios · 12 Perspectives · 5 Skills]
-        SK[Skill Library<br/>markscientist/skills/*/SKILL.md]
-        TL[Taste Learning]
-        SK --> META
-        TL --> META
-    end
+    U[User]
+    C[Challenger]
+    P[Project]
+    S[Solver]
+    R[Report]
+    J[Judge]
+    SK[Skill]
+    TL[Taste Learning]
 
-    U[User Prompt] --> WF[Workflow Scheduler]
-    WF --> C[Challenger]
-    C --> P[Prepared Project]
-    P --> S[Solver]
-    S --> R[Report]
-    R --> J[Judge Panel]
-    J --> F{Next Action}
-    F -->|solver_revision| S
-    F -->|rechallenge| C
-    F -->|accept| DONE[Workflow Complete]
-    J -. uses .-> META
-    FB[feedback_history.jsonl] -. drives .-> TL
-    TL -. calibrates .-> J
-    WF --> T[Workflow Trace Summary]
+    U --> C
+    C --> P
+    P --> S
+    S --> R
+    R --> J
+    J --> S
+    J --> C
+    SK --> J
+    TL --> J
 ```
 
 The lower-layer execution details live in `ResearchHarness`, and `MarkScientist` connects to them like this:
