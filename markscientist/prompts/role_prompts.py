@@ -70,11 +70,11 @@ CHALLENGER_ROLE_PROMPT = _build_role_prompt(
         "Do not keep searching for a better third paper, a more canonical survey, or a larger dataset once one strong project can already be defined and executed.",
         "Canonical related work under `task/related_work/` must be real PDFs. The harness will later export a Solver-visible subset into `public/related_work/` automatically.",
         "Those source and Solver-visible PDFs must be real and traceable: use the strongest verified PDFs already present under `task/related_work/` when available, or genuinely download real PDFs during challenge preparation when the project requires it.",
-        "Prefer search tools to discover candidate sources and trusted direct links, then use local file tools and `Bash` only to save the exact chosen materials into the workspace.",
+        "Use `ScholarSearch` to discover and structurally confirm candidate papers, then use `DownloadPDF` to save validated PDFs into the workspace. Do not use `Bash` for routine PDF downloads.",
         "Prefer open, directly downloadable sources such as government reports, project annual reports, institutional repositories, Zenodo, NOAA or university archives, and arXiv-style PDF endpoints over publisher-hosted or login-gated downloads.",
-        "Favor trusted direct PDF URLs and directly downloadable dataset files over long landing-page inspection loops.",
-        "If a candidate PDF endpoint returns HTML, a login page, a 403, an SSL error, or an invalid PDF signature, discard that source quickly and move to a more accessible alternative instead of repeatedly retrying it.",
-        "If a trusted direct PDF URL is clear from search results, download it into `task/related_work/` and validate it locally with `ReadPDF` instead of spending more time on remote page inspection.",
+        "Favor trusted direct PDF URLs and directly downloadable dataset files over long landing-page inspection loops. For PDFs, route direct links through `DownloadPDF` so HTML landing pages are rejected.",
+        "If `DownloadPDF` reports HTML, a login page, a 403, an SSL error, or an invalid PDF signature, discard that source quickly and move to a more accessible alternative instead of repeatedly retrying it.",
+        "If a trusted direct PDF URL is clear from search results, use `DownloadPDF` to download it into `task/related_work/`, then use `ReadPDF` for local content inspection instead of spending more time on remote page inspection.",
         "Do not spend the challenge phase exhaustively validating every candidate source. After a small verified set is in hand, stop discovery and package the private task.",
         "A normal successful challenge pass should converge quickly. If you have already used several turns to gather PDFs and still have not started building `task/data/`, assume you are over-exploring and switch immediately to dataset derivation and task packaging.",
         "Do not fabricate placeholder PDFs, empty PDFs, renamed sidecar files, or fake 'paper' files just to satisfy the task contract.",
@@ -217,9 +217,9 @@ The harness will automatically export the solver-visible workspace from the priv
 - First create or curate the canonical source materials under `task/data/` and `task/related_work/` when they are missing or inadequate.
 - `task/data/` is only for canonical data artifacts. Do not place report PDFs, paper PDFs, or literature PDFs there.
 - `task/related_work/` must contain canonical PDF references only. The harness will later export the top-level PDF subset to `public/related_work/`.
-- Those source PDFs must be real and traceable. Prefer copying real source PDFs into `task/related_work/`. If you must download additional references, download genuine PDFs into `task/related_work/` first. Do not create placeholder PDFs, empty PDFs, or fake paper files.
-- Favor trusted direct PDF URLs and directly downloadable dataset files over long landing-page inspection loops. If a trusted direct PDF URL is already evident, download it and validate it locally with `ReadPDF`.
-- If a candidate source gives a 403, HTML landing page, login wall, SSL failure, or invalid PDF signature, drop it quickly and move to another accessible source instead of retrying the same endpoint.
+- Those source PDFs must be real and traceable. Prefer copying real source PDFs into `task/related_work/`. If you must download additional references, use `DownloadPDF` to download genuine validated PDFs into `task/related_work/` first. Do not create placeholder PDFs, empty PDFs, or fake paper files.
+- Favor trusted direct PDF URLs and directly downloadable dataset files over long landing-page inspection loops. If a trusted direct PDF URL is already evident, use `DownloadPDF` to download and validate it before local `ReadPDF` inspection.
+- If `DownloadPDF` reports a 403, HTML landing page, login wall, SSL failure, or invalid PDF signature, drop that source quickly and move to another accessible source instead of retrying the same endpoint.
 - `task/data/` must contain the canonical real dataset files for the project.
 - If the project starts from PDF source reports, convert those reports into explicit derived datasets under `task/data/` and keep the original PDFs under `task/related_work/` or `task/target_study/`.
 - If `task/related_work/` already has enough real PDFs to support the project, your next step is to derive `task/data/` from those PDFs, not to keep collecting more PDFs.

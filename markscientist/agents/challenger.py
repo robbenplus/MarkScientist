@@ -9,14 +9,14 @@ from agent_base import agent_role
 @agent_role(
     name="challenger",
     role_prompt=CHALLENGER_ROLE_PROMPT,
-    function_list=["Glob", "Grep", "Read", "ReadPDF", "Write", "Edit", "Bash", "WebSearch", "ScholarSearch"],
+    function_list=["Glob", "Grep", "Read", "ReadPDF", "Write", "Edit", "Bash", "WebSearch", "ScholarSearch", "DownloadPDF", "WebFetch"],
 )
 class ChallengerAgent(BaseScientistAgent):
     """Project-scoping agent that prepares a research workspace."""
 
     agent_type = "challenger"
-    max_llm_calls_override = 8
-    max_runtime_seconds_override = 1200
+    max_llm_calls_override = 512
+    max_runtime_seconds_override = 7200
 
 
 @agent_role(
